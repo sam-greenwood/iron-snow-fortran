@@ -15,5 +15,5 @@ as per the reference case described in Davies and Pommier (2018).
 
 ***The code on this branch is the original version of the code, for the latest version see the code on the `main` branch.
 
-The code on the main branch has been modified slightly from the original code. The modification is in the gravitational energy released associated with the moving boundary of the snow zone, which has been changed to be proportional to the jump in Sulphur mass fraction (<c>=c^s-c^l), rather than just the Sulphur mass fraction (c^s) (see Davies and Pommier (2018) equation 17).
+The code on the main branch has been modified slightly from the original code. The modification is in the gravitational energy released associated with the moving boundary of the snow zone, which has been changed to be proportional to the jump in Sulphur mass fraction (c^s-c^l), rather than just the Sulphur mass fraction (c^s) (see Davies and Pommier (2018) equation 17).
 
