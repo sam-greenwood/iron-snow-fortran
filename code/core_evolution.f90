@@ -41,8 +41,7 @@
     call mass2moleconc_core(clO, clS, clSi, clbarO, clbarS, clbarSi) !Get mole fractions too
     call adiabat_poly_core(N,Tc,Qa)                                  !Find Ta on this grid
     call pressure_poly_core(Nic,N,Pc)                                !Find P on this grid
-    !call conductivity_T_core()                                       !Get conductivity profile
-    call conductivity_poly_core()
+    call conductivity_T_core()                                       !Get conductivity profile
     call entropy_melting()                                           !Find dS
     call melting_mars(clS)                                       !Find Tm(P)
 
@@ -84,8 +83,7 @@
     call grav_pot_poly_core(Nic,N)
     call adiabat_poly_core(N,Tc,Qa)
     call pressure_poly_core(Nic,N,Pc)
-    !call conductivity_T_core()                     ! Get conductivity profile
-    call conductivity_poly_core()
+    call conductivity_T_core()                     ! Get conductivity profile
     call entropy_melting()
     call melting_mars(clS)
     if(meltdep == 0.d0) then
@@ -106,7 +104,7 @@
       phi_s(Nsl+1:N) = Cl_snow(Nsl+1:N)*Tar_c(Nsl+1:N)*dTcdt*secinyr*dt/cliq_s(Nsl+1:N)/Tc !phi on new grid with old dT/dt
       call solid_mass_test(N, Nsl, time, phi_s, phi_tot)
       call crfac(Nsl,Tc,rs,Cr_snow)
-      call ccfac(Nsl, cliq_s(Nsl+1), clS , CcS_snow) !Equal to zero
+      call ccfac(Nsl, cliq_s(Nsl+1), clS , CcS_snow)
       call cpfac(Nsl, cliq_s, dcldT_s, Tc, Cp_snow)
       call latent_core(  Nsl,LH_c,Tc,Cr_snow,Qlt_snow,Elt_snow)
       Qlt_snow = Qlt_snow*phi_s(Nsl+1); Elt_snow = Elt_snow*phi_s(Nsl+1) !Total LH released by freezing at interface
@@ -141,7 +139,7 @@
       ! Latent heat absorbed: L(rs) dMs/dt; only L is evaluated at the interface 
       LH_s = LH_c(Nsl+1)                                                        !Set LH to base of snow value
       call secular_snow(N,Nsl,Tc,LH_s,cliq_s,Cl_snow,Qmt_snow,Emt_snow)
-      call gravitational_remelting(Nsl, 0, Tc, Cr_snow, CcS_snow, Cp_snow, cliq_s(Nsl+1)-clS, alphac_cS, Qgt_liq, Egt_liq) !Changed to be jump in composition-SamG.
+      call gravitational_remelting( Nsl,0,Tc,Cr_snow,CcS_snow,Cp_snow,clS,alphac_cS,Qgt_liq,Egt_liq)   !Snow zone
       call gravitational_freezing(N,Nsl,Tc,Cr_snow,cliq_s        ,dcldT_s,alphac_cS,Qgt_snow,Egt_snow) !Snow zone
       Qmt_snow = -1.d0*Qmt_snow; Emt_snow = -1.d0*Emt_snow 
     endif
