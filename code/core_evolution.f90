@@ -106,7 +106,7 @@
       phi_s(Nsl+1:N) = Cl_snow(Nsl+1:N)*Tar_c(Nsl+1:N)*dTcdt*secinyr*dt/cliq_s(Nsl+1:N)/Tc !phi on new grid with old dT/dt
       call solid_mass_test(N, Nsl, time, phi_s, phi_tot)
       call crfac(Nsl,Tc,rs,Cr_snow)
-      call ccfac(Nsl, cliq_s(Nsl+1), clS , CcS_snow) !Equal to zero
+      call ccfac(Nsl, cliq_s(Nsl+1), clS , CcS_snow)
       call cpfac(Nsl, cliq_s, dcldT_s, Tc, Cp_snow)
       call latent_core(  Nsl,LH_c,Tc,Cr_snow,Qlt_snow,Elt_snow)
       Qlt_snow = Qlt_snow*phi_s(Nsl+1); Elt_snow = Elt_snow*phi_s(Nsl+1) !Total LH released by freezing at interface
