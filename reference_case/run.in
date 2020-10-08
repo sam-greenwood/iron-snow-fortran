@@ -1,0 +1,27 @@
+* File stem
+OUT
+* Use polynomial (=1) or Labrosse (=2) representation; QPne0 (=1); Qhne0 (=1)
+1 2 2
+* rho, P, at earth's centre; cp
+7211e0 21e9 780
+* density params for OC (1st 4) and IC
+7211e0 0.0 0.0 0.0 7211e0 0.0
+* Entropy of melting
+1.99731 -0.0082006 0.d0 0.d0 0.d0
+* Melting params, Tm0, Tm1, Tm2, Tm3, Tm4, depression of melt pt
+1990.48621274289 -0.00218881211768781 3.77133942042793e-07 0 0.0 0.106
+* Temperature params
+2457.84550024146 -2.88429493500129e-12 -7.60393797523802e-08 0.0
+* conductivity params k0, k1, k2
+40 0.0 0.0
+* Concentrations for O, S, Si
+0.0000 0.172 0.0000
+* Tcmb, ri, rs, h
+2400.d0 0.0 1627e3 0.d0
+* delta t, total t
+5e6 4.5e9
+* What are you specifying: 1=Qcmb; 2=EJ; 3=Qcmb post IC formation; EJ otherwise
+* Also give the value of the thing you're inputting
+0 0.0
+* file to read CMB hf
+WN04-Qcmb

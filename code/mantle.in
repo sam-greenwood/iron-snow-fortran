@@ -1,0 +1,8 @@
+* file stem
+OUT
+* mantle density, gravity and radius
+3400d0 3.7 3400e3
+* specific heat, conductivity, expansivity, ref viscosity@1300C
+1200.0 3.2 4e-5 1e20
+* Surface T, gamma
+193.0 0.023

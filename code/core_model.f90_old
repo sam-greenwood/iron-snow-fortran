@@ -1,0 +1,1795 @@
+  module core_model
+
+    use parameters
+    use parameters_core
+  
+    implicit none
+
+    character (len=100) :: out_file
+    double precision :: rho_cen, Pc, cp_c
+    double precision :: k0_oc, k1_oc, k2_oc
+    double precision :: Tm0_c, Tm1_c, Tm2_c, Tm3_c, Tm4_c, meltdep
+    double precision :: M_c, M_oc, M_ic
+    double precision :: rho0_oc, rho1_oc, rho2_oc, rho3_oc, rho0_ic, rho2_ic
+    double precision :: T_cen,  t1_c,  t2_c,  t3_c
+    double precision :: ds0_c, ds1_c, ds2_c, ds3_c, ds4_c
+    double precision :: A, A2, A3, B2, D, D2, D4, L, L2, L3
+    double precision :: pr_c(0:N)   , rhor_c(0:N) , gr_c(0:N) , psir_c(0:N) 
+    double precision :: Tar_c(0:N)  , Tm_c(0:N)   , ds_c(0:N)
+    double precision :: dTadr_c(0:N), dTmdP_c(0:N), kr_c(0:N)
+    double precision ::  r_c(0:N),r2_c(0:N),r3_c(0:N),r4_c(0:N),r5_c(0:N)
+    double precision :: r6_c(0:N),r7_c(0:N),r8_c(0:N),r9_c(0:N),r10_c(0:N),r11_c(0:N)
+    double precision :: ri0, rs, h0_c, h
+    double precision :: dt, ttot
+    double precision, allocatable :: cmbflux(:), time_file(:), dt_file(:)
+    integer          :: nt, out_file_len, sol, davies_or_nimmo, ah, hor
+    integer          :: iteration
+
+  contains 
+
+!******************************************************************************
+! read_input: reads the input file davies_TH_params
+! 
+! Inputs: Q  - CMB heat flux
+!         Tc - CMb temperature
+!         ri - Inner core radius
+!         EJ - Ohmic heating
+!
+! Comments in the input file are lines starting with an *
+! If the solution method sol=0 then Q is read in from a file
+!******************************************************************************
+  subroutine read_input_core(Q,Tc,ri,EJ,cbarO_oc,cbarS_oc,cbarSi_oc)
+
+    double precision      :: cbarO_oc, cbarS_oc, cbarSi_oc
+    double precision      :: tmp, Tc, ri, Q, EJ
+    character (len=100)   :: line
+
+!   This was used to read in the filename containing input variables. 
+!   Now this name is hard-coded
+!   
+21    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 21
+      out_file     = adjustl(line)
+      out_file_len = index(out_file, ' ')-1
+      out_file    = out_file(1:out_file_len)
+
+22    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 22
+      read(line, *) davies_or_nimmo, ah, hor
+
+23    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 23
+      read(line, *) rho_cen, Pc, cp_c
+
+24    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 24
+      read(line, *) rho0_oc, rho1_oc, rho2_oc, rho3_oc, rho0_ic, rho2_ic
+
+25    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 25
+      read(line, *) ds0_c, ds1_c, ds2_c, ds3_c, ds4_c
+
+26    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 26
+      read(line, *) Tm0_c, Tm1_c, Tm2_c, Tm3_c, Tm4_c, meltdep
+
+27    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 27
+      read(line, *) T_cen, t1_c, t2_c, t3_c
+
+28    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 28
+      read(line, *) k0_oc, k1_oc, k2_oc
+
+29    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 29
+      read(line, *) cbarO_oc, cbarS_oc, cbarSi_oc
+
+30    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 30
+      read(line, *) Tc, ri, rs, h0_c
+      h = h0_c
+
+31    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 31
+      read(line, *) dt,ttot
+
+      Q  = 0.d0
+      Ej = 0.d0
+32    continue
+      read(5, 80) line
+      if(line(1:1) .eq. '*') goto 32
+      read(line, *) sol, tmp
+
+      if(sol==1 .or. sol==3 .or. sol==4) then
+        Q  = tmp
+      elseif(sol==2) then
+        EJ = tmp
+      endif
+
+!     If read in Q, nt to be determined
+      nt = 0
+      if(sol==0) then 
+
+33      continue
+        read(5, 80) line
+        if(line(1:1) .eq. '*') goto 33
+
+        call read_cmbhf_core(line)
+      else
+        nt = int(ttot)/int(dt)
+
+        allocate(cmbflux(0:nt))
+
+        cmbflux = 0.d0
+      endif
+
+      write(*,*) '# timepts = ', nt
+
+      close(5)
+
+ 80   FORMAT(A)
+
+  end subroutine read_input_core
+
+!******************************************************************************
+! read_cmbhf: reads the CMB heat flux Q from a file
+! 
+! Inputs: Qcmb_file - name of file containing Q 
+!                     format is 2 columns: t, Q
+! 
+! n is a parameter set arbitrarily large (hopefully larger than the # rows!)
+!******************************************************************************
+  subroutine read_cmbhf_core(Qcmb_file)
+
+    integer         , parameter   :: n=100000000
+    double precision              :: tmp(n), t(n)
+    character (len=100) :: Qcmb_file
+    integer :: i
+
+    open(99,file=Qcmb_file) 
+
+    t  = 0.d0; tmp = 0.d0
+    nt = 0
+
+    do i = 0, n
+      read(99,*,end=100) t(i), tmp(i)
+      nt = nt + 1
+    enddo
+
+100 continue
+
+    nt = nt - 1
+
+    allocate(cmbflux(0:nt))
+    allocate(time_file(0:nt))
+    allocate(dt_file(0:nt))
+
+!   Set up time and Q so they run backwards. 
+    dt_file = 0.d0
+    time_file = 0.d0
+    cmbflux = 0.d0
+    do i = 0, nt
+      time_file(i) = t(nt-i)*1e3
+      cmbflux(i)   = tmp(nt-i)*1e12                                  !Q in TW
+      if(i > 0) dt_file(i) = dabs(time_file(i) - time_file(i-1))*1e6 !dt in Myr
+      write(546,*) time_file(i), dt_file(i-1), cmbflux(i)
+    enddo
+
+  end subroutine read_cmbhf_core
+
+!******************************************************************************
+! rpts: sets up the radial grid
+!
+! Inputs: ri - dimensional radius of the ICB
+!         rs - dimensional radius of the CMB
+!
+! Outputs: r - array of radius points (global variable)
+!
+! Ni points are always allocated to the inner core; Nc to outer core
+!******************************************************************************
+  subroutine rpts_core(ri,rs)
+
+    double precision, intent(in) :: ri, rs
+    double precision :: dric, droc       !dr, ic, oc, strat layer
+    integer          :: i,bottom,oclower !where to start and stop in core
+
+    r_c(0) = 0.d0                              !First point always at the origin
+
+    if(ri .ne. 0.d0) then                    !Check there is an inner core
+      dric =     ri /real(Ni)                !Divide the points equally in space
+      do i = 1, Ni
+        r_c(i)  = r_c(i-1) + dric
+        r2_c(i) = r_c(i)*r_c(i)
+        r3_c(i) = r_c(i)*r_c(i)*r_c(i)
+        r4_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r5_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r6_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r7_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r8_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r9_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r10_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+        r11_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      enddo
+      bottom = Ni+1
+    else                                     !If not, OC starts from the centre
+      bottom = 1
+    endif
+
+                                             !Now do the outer core
+    if(ri .ne. 0.d0) then                    !Check there is an inner core
+      droc = (rs-ri)/real(N-bottom)
+
+      r_c(bottom) = r_c(Ni)
+      r2_c(bottom) = r_c(Ni)*r_c(Ni)
+      r3_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r4_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r5_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r6_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r7_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r8_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r9_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r10_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+      r11_c(bottom) = r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)*r_c(Ni)
+    
+      oclower = bottom + 1
+    else
+      droc = (rs-ri)/real(N-bottom+1)
+      oclower = bottom
+    endif
+
+    do i = oclower, N                       !Convecting core
+      r_c(i)  = r_c(i-1) + droc
+      r2_c(i) = r_c(i)*r_c(i)
+      r3_c(i) = r_c(i)*r_c(i)*r_c(i)
+      r4_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r5_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r6_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r7_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r8_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r9_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r10_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+      r11_c(i) = r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)*r_c(i)
+    enddo
+
+  end subroutine rpts_core
+
+!******************************************************************************
+! Lcalc: Calculates the length L in equation (43) of Francis Nimmo's revised 
+!        treatise article on Energetics of the core
+!
+! Outputs: L, L2, L3 (global variables)
+!
+! rho_zeroP and K_zeroP are paramerts set in parameters.f90
+!******************************************************************************
+  subroutine Lcalc_core()
+
+    double precision :: Lnum, Lden
+
+    Lnum = 3.d0*K_zeroP*(dlog(rho_cen/rho_zeroP) + 1.d0) 
+    Lden = 2.d0*pi*G*rho_cen*rho_zeroP
+    L    = dsqrt(Lnum/Lden)
+    L2   = L*L
+    L3   = L*L*L
+
+    write(*,'(A16,E16.6)'  ) 'L OC (=7272km) = ', L
+
+  end subroutine Lcalc_core
+
+!******************************************************************************
+! Dcalc: Calculates the length D in equation (47) of Francis Nimmo's revised
+!        treatise article on Energetics of the core
+!
+! Outputs: D, L2, D4 (global variables)
+!
+! NOTE:  Changing alphaT_c, cp or rho(r=0) can have significant consequences 
+!        because it changes the adiabat. This will change the ICB radius 
+!        (defined where the melting curve intersects the adiabat) as well as 
+!        all the energy and entropy terms that depend on Ta
+! There is a little fudge here to ensure I get the same value of D as in the
+! Treatise article so that I could make the comparisons in my PEPI paper. 
+! It can easily be removed. 
+!******************************************************************************
+  subroutine Dcalc_core()
+
+!    double precision :: alphaT_c
+
+!   Changing cp changes the lengthscale and hence the shape of the adiabat. 
+!   I don't want this to happen if I want to make a fair comparison between 
+!   Nimmo and me cause then the actual size of the core changes , etc
+!   So for now just offset the change in cp with a change in alphaT_c, 
+!   which isn't used anywhere else except the pressure heating. 
+!   Keep it as an internal variable here so the effects dont propagate. 
+!    if(cp == 715.d0) alphaT_c = 1.062e-5
+!    if(cp == 840.d0) alphaT_c = 1.25e-5
+
+    D  = dsqrt((3.d0*cp_c)/(2.d0*pi*alphaT_c*rho_cen*G))
+    D2 = D*D
+    D4 = D2*D2
+
+    write(*,'(A16,E16.6)'  ) 'D(=6203km)     = ', D
+
+  end subroutine Dcalc_core
+
+!******************************************************************************
+! Acalc: Calculates the length A in equation (56) of Francis Nimmo's revised
+!        treatise article on Energetics of the core
+!
+! Outputs: A, A2, A3 (global variables)
+!******************************************************************************
+  subroutine Acalc_core()
+
+    A2 = 1.d0/(1.d0/L2 + 1.d0/D2)
+    A  = dsqrt(A2)
+    A3 = A*A*A
+
+  end subroutine Acalc_core
+
+!******************************************************************************
+! Bcalc: Calculates the length B in equation (60) of Francis Nimmo's revised
+!        treatise article on Energetics of the core
+!
+! Outputs: B2 (global variables)
+!******************************************************************************
+  subroutine Bcalc_core()
+
+    B2 = 1.d0/(1.d0/L2 - 1.d0/D2)
+  
+  end subroutine Bcalc_core
+
+!******************************************************************************
+! mole2massconc: convert the inputted molar concentrations of O, S and Si into 
+!                mass concentrations that are evolved in time. 
+!
+! Inputs: Molar concentrations (bars; global variables)
+! Outputs: Mass concentrations cO, cS, cSi
+!
+! Mole fraction (#atoms of solute/total #atoms) c' = A'/AL * c, c = mass fraction
+!
+! Only O is evolved in time because the core chemistry model used here assumes 
+! that only O is responsible for the compositional part of the ICB density jump
+!
+! Molecular weights are set as parameters in parameters.f90
+!******************************************************************************
+  subroutine mole2massconc_core(cbarO_oc, cbarS_oc, cbarSi_oc, cO, cS, cSi)
+
+    double precision, intent(in)  :: cbarO_oc, cbarS_oc, cbarSi_oc
+    double precision, intent(out) :: cO, cS, cSi
+    double precision              :: Abar
+
+    Abar = cbarO_oc*AO + cbarS_oc*AS + cbarSi_oc*ASi + (1.d0-cbarO_oc-cbarS_oc-cbarSi_oc)*AFe
+
+    cO  = cbarO_oc *((AO*1.d0)/Abar)
+    cS  = cbarS_oc *((AS*1.d0)/Abar)
+    cSi = cbarSi_oc*((ASi*1.d0)/Abar)
+
+    write(*,'(A16,E16.6)') 'cO=',cO
+    write(*,'(A16,E16.6)') 'cS=',cS
+    write(*,'(A16,E16.6)') 'cSi=',cSi
+
+  end subroutine mole2massconc_core
+
+  subroutine mass2moleconc_core(cO, cS, cSi, cbarO_oc, cbarS_oc, cbarSi_oc)
+
+    double precision, intent(in)    :: cO, cS, cSi
+    double precision, intent(inout) :: cbarO_oc, cbarS_oc, cbarSi_oc
+    double precision                :: Abar
+
+    Abar = 1.d0 / (cO/AO + cS/AS + cSi/ASi + (1.d0-cO-cS-cSi)/AFe)
+
+    cbarO_oc  = cO / ((AO*1.d0)/Abar)
+    cbarS_oc  = cS / ((AS*1.d0)/Abar)
+    cbarSi_oc = cSi /((ASi*1.d0)/Abar)
+
+    write(*,'(A16,E16.6)') 'cbarO=',cbarO_oc
+    write(*,'(A16,E16.6)') 'cbarS=',cbarS_oc
+    write(*,'(A16,E16.6)') 'cbarSi=',cbarSi_oc
+
+  end subroutine mass2moleconc_core
+
+!******************************************************************************
+! conc_evol2: an old routine for evolving O conc over time. 
+!
+! NO LONGER USED. 
+!******************************************************************************
+  subroutine conc_evol2(N, ri, dridt, conc, dcdt)
+
+    integer         , intent(in)  :: N
+    double precision, intent(in)  :: ri, dridt, conc
+    double precision, intent(out) :: dcdt
+    double precision :: num, den
+
+    num  = (ri**2) * dridt * conc
+    den  = r3_c(N) - (ri**3)
+
+    dcdt = num/den
+
+  end subroutine conc_evol2
+
+!******************************************************************************
+! conc_evol3: A routine modified from Francis Nimmo for evolving O concentration 
+!             over time
+!
+! Inputs:     X0 - initial concentration (volume fraction)
+!             DCORE - partition coefficient 
+!             ri - inner core radius
+!
+! Outputs:    X - new conc
+!
+! NO LONGER USED
+!******************************************************************************
+  subroutine conc_evol3(ri, X0, X)
+
+    double precision, intent(in)  :: ri, X0
+    double precision, intent(out) :: X
+    double precision :: DCORE, EPS
+
+    EPS = ri/rc
+    DCORE=0.5d0
+
+    X=X0/(1.d0-(EPS**3.d0)+(DCORE*(EPS**3.d0)))
+
+    write(*,'(A16,3E16.6)') 'conc=', X, X0, (1.d0-(EPS**3.d0)+(DCORE*(EPS**3.d0)))
+
+  end subroutine conc_evol3
+
+!******************************************************************************
+! adiabat: Calculates the adiabatic temperature profile, its gradient and Qa
+!          using equation (47) of Francis Nimmo's revised Treatise article
+!
+! Inputs: N - index for CMB
+!         Tc - Temperature at CMB
+!
+! Outputs: Qa - Adiabatic heat flux
+!          Tar_c - Adiabatic temperature profile (global variable)
+!          dTadr_c - Adiabatic temperature gradient (global variable)
+!
+! Eq. (47) uses the temperature at the centre of the Earth, T_cen, as the anchor 
+! point. We evolve Tc in time. To relate the two, I first calculate an adiabat 
+! from the current value of T_cen and then correct this by comparing the resulting 
+! temperature at the CMB with Tc. 
+!******************************************************************************
+  subroutine adiabat_core(N, Tc, Qa)
+
+    integer         , intent(in)  :: N
+    double precision, intent(in)  :: Tc  
+    double precision :: Qa
+!    double precision :: delta
+
+!    Tar_c       =  T_cen*dexp(-r2_c/D2)       !Calc adiabat based on Tcen
+!    delta       =  Tc - Tar_c(N)             !Compare Ta @ CMB to Tc
+
+!    T_cen  = T_cen + delta
+!    Tar_c =  T_cen*dexp(-r2_c/D2)
+
+    T_cen = Tc*dexp(r2_c(N)/D2)
+    Tar_c = T_cen*dexp(-r2_c/D2) 
+
+    dTadr_c = -2.d0*r_c*T_cen*dexp(-r2_c/D2)/D2
+    Qa    = 8.d0*pi*r3_c(N)*kr_c(N)*Tc/D2
+
+  end subroutine adiabat_core
+
+!******************************************************************************
+! adiabat_poly: Calculates the adiabatic temperature using equation (14) of 
+!               Davies (PEPI, 2014, submitted) 
+!
+! Inputs: N - index for CMB
+!         Tc - Temperature at CMB
+!
+! Outputs: Qa - Adiabatic heat flux
+!          Tar_c - Adiabatic temperature profile (global variable)
+!          dTadr_c - Adiabatic temperature gradient (global variable)
+!
+! The correction procedure for Ta is the same as described in adiabat()
+!******************************************************************************
+  subroutine adiabat_poly_core(N, Tc, Qa)
+
+    integer         , intent(in) :: N
+    double precision, intent(in) :: Tc
+    double precision :: Qa
+!    double precision :: delta
+
+    T_cen  = Tc / (1.d0 + t1_c*(r_c(N)/1e3) + t2_c*(r2_c(N)/1e6) + t3_c*(r3_c(N)/1e9))
+    Tar_c  = T_cen * (1.d0 + t1_c*(r_c/1e3) + t2_c*(r2_c/1e6)    + t3_c*(r3_c/1e9))
+
+!    Tar_c   = T_cen * (1.d0 + t1_c*(r_c/1e3) + t2_c*(r2_c/1e6) + t3_c*(r3_c/1e9))
+!    delta = Tc - Tar_c(N)              !Compare Ta @ CMB to Tc
+
+!    T_cen  = T_cen + delta
+!    Tar_c   = T_cen * (1.d0 + t1_c*(r_c/1e3) + t2_c*(r2_c/1e6) + t3_c*(r3_c/1e9))
+
+    dTadr_c = T_cen * (t1_c + 2.d0*t2_c*(r_c/1e3) + 3.d0*t3_c*(r2_c/1e6))
+    dTadr_c = dTadr_c / 1e3
+    Qa    = -4.d0*pi*r2_c(N)*kr_c(N)*dTadr_c(N)
+
+  end subroutine adiabat_poly_core
+
+  subroutine adiabat_init(Tc, Qa)
+
+    double precision :: Tc, Qa
+
+    T_cen  = Tm_c(Ni) / (1.d0 + t1_c*(r_c(Ni)/1e3) + t2_c*(r2_c(Ni)/1e6) + t3_c*(r3_c(Ni)/1e9))
+    Tar_c  = T_cen    * (1.d0 + t1_c*(r_c/1e3)     + t2_c*(r2_c/1e6)     + t3_c*(r3_c/1e9))
+
+    Tc = Tar_c(N)
+
+    dTadr_c = T_cen * (t1_c + 2.d0*t2_c*(r_c/1e3) + 3.d0*t3_c*(r2_c/1e6))
+    dTadr_c = dTadr_c / 1e3
+    Qa    = -4.d0*pi*r2_c(N)*kr_c(N)*dTadr_c(N)
+
+  end subroutine adiabat_init
+
+!******************************************************************************
+! density: Calculates core density using equation (56) of Francis Nimmo's revised
+!          treatise article on Energetics of the core
+!******************************************************************************  
+  subroutine density_core()
+
+    rhor_c = rho_cen*dexp(-r2_c/L2)
+
+  end subroutine density_core
+
+!******************************************************************************
+! density_poly: Calculate core density using equation (7) of Davies (2014, PEPI) 
+!              
+! rhor_c(Ni)*conc*alphac_c is the part of the density jump due to Oxygen. 
+! Presently this is not used because the density jump input to the code does not 
+! have to equal that in the density profile. 
+!******************************************************************************
+  subroutine density_poly_core(Ni, conc, alphac)
+
+    integer, intent(in)          :: Ni
+    double precision, intent(in) :: conc, alphac
+    double precision             :: drho_comp
+
+    rhor_c         = 0.d0
+
+    if(Ni > 0)  then 
+      rhor_c(0:Ni)   = rho0_ic + rho2_ic*(r2_c(0:Ni)/1e6)
+      rhor_c(Ni+1:N) = rho0_oc + rho1_oc*(r_c(Ni+1:N)/1e3) + rho2_oc*(r2_c(Ni+1:N)/1e6) + rho3_oc*(r3_c(Ni+1:N)/1e9)
+    else 
+      rhor_c(0:N)    = rho0_oc + rho1_oc*(r_c(0:N)/1e3)    + rho2_oc*(r2_c(0:N)/1e6)    + rho3_oc*(r3_c(0:N)/1e9)
+    endif
+
+    drho_comp = rhor_c(Ni)*conc*alphac
+
+    write(*,'(A16,E16.6,A16,E16.6)') 'drho_comp=',drho_comp, 'drho_prem=', rhor_c(Ni)-rhor_c(Ni+1)
+
+  end subroutine density_poly_core
+
+!******************************************************************************
+! gravity: Calculates gravity using equation (46) of Francis Nimmo's revised
+!          treatise article on Energetics of the core
+!******************************************************************************
+  subroutine gravity_core()
+
+    gr_c = 4.d0*pi*G*rho_cen*r_c*(1.d0 - 0.6d0*(r2_c/L2))/3.d0
+
+  end subroutine gravity_core
+
+!******************************************************************************
+! gravity_poly: Calculates gravity using equations (10) and (11) of Davies 
+!               (2014, PEPI, submitted) 
+!******************************************************************************
+  subroutine gravity_poly_core(Ni)
+
+    integer, intent(in) :: Ni
+    double precision    :: M_core(0:N)
+
+    M_core = 0.d0; gr_c=0.d0
+
+    M_core(0:Ni)   = rho0_ic*(r_c(0:Ni)/1e3)/3.d0 + rho2_ic*(r3_c(0:Ni)/1e9)/5.d0
+
+    M_core(Ni+1:N) = M_core(Ni) + & 
+                    rho0_oc*(r_c (Ni+1:N)/1e3)/3.d0 + rho1_oc*(r2_c(Ni+1:N)/1e6)/4.d0  + & 
+                    rho2_oc*(r3_c(Ni+1:N)/1e9)/5.d0 + rho3_oc*(r4_c(Ni+1:N)/1e12)/6.d0 - & 
+                   (rho0_oc*(r_c (Ni+1)  /1e3)/3.d0 + rho1_oc*(r2_c(Ni+1)  /1e6)/4.d0 + &
+                    rho2_oc*(r3_c(Ni+1)  /1e9)/5.d0 + rho3_oc*(r4_c(Ni+1)  /1e12)/6.d0)
+
+    gr_c = 4.d0 * pi * G*M_core*1e3 
+
+  end subroutine gravity_poly_core
+
+!******************************************************************************
+! grav_pot: Calculates the gravitational potential using equation (63) of Francis 
+!           Nimmo's revised treatise article on Energetics of the core 
+!           Potential is relative to zero potential at the CMB
+!
+! Inputs: N - Index for CMB radius
+!******************************************************************************
+  subroutine grav_pot_core(N)
+
+    integer :: i, N
+    double precision :: psi_rc
+   
+    psi_rc = (2.d0*pi*G*rho_cen*r2_c(N)*(1.d0 - (3.d0*r2_c(N)/(10.d0*L2)))) / 3.d0
+
+    do i = 1, N
+      psir_c(i) = (2.d0*pi*G*rho_cen*r2_c(i)*(1.d0 - (3.d0*r2_c(i)/(10.d0*L2)))) / 3.d0 - psi_rc
+    enddo
+
+  end subroutine grav_pot_core
+
+!******************************************************************************
+! grav_pot_poly: Calculates the gravitational potential using equation (12) of 
+!                Davies (2014, PEPI, submitted)
+!
+! Inputs: Ni - Index for ICB
+!         N - Index for CMB
+!******************************************************************************
+  subroutine grav_pot_poly_core(Ni, N)
+
+    integer, intent(in) :: Ni, N
+    double precision    :: gpot_cmb, gpot_icb, gpot_icbi
+    integer :: i
+
+    psir_c = 0.d0; gpot_cmb=0.d0; gpot_icb=0.d0; gpot_icbi=0.d0
+
+    gpot_cmb = rho0_oc*(r2_c(N)/1e6)/6.d0    + rho1_oc*(r3_c(N)/1e9)/12.d0 + &
+               rho2_oc*(r4_c(N)/1e12)/20.d0  + rho3_oc*(r5_c(N)/1e15)/30.d0
+
+    gpot_icb = rho0_oc*(r2_c(Ni+1)/1e6)/6.d0   + rho1_oc*(r3_c(Ni+1)/1e9)/12.d0 + &
+               rho2_oc*(r4_c(Ni+1)/1e12)/20.d0 + rho3_oc*(r5_c(Ni+1)/1e15)/30.d0
+
+    gpot_icbi= rho0_ic*(r2_c(Ni)/1e6)/6.d0     + & 
+               rho2_ic*(r4_c(Ni)/1e12)/20.d0
+
+    do i = 0, Ni
+      psir_c(i) = rho0_ic*(r2_c(i)/1e6)/6.d0 + rho2_ic*(r4_c(i)/1e12)/20.d0 - gpot_cmb + gpot_icb - gpot_icbi
+    enddo
+
+    do i = Ni+1, N
+      psir_c(i) = rho0_oc*(r2_c(i)/1e6)/6.d0   + rho1_oc*(r3_c(i)/1e9)/12.d0 + &
+                rho2_oc*(r4_c(i)/1e12)/20.d0 + rho3_oc*(r5_c(i)/1e15)/30.d0 - gpot_cmb !-gpot_icb + & 
+!                rho0_ic*(r2_c(Ni)/1e6)/6.d0 + rho2_ic*(r4_c(Ni)/1e12)/20.d0
+    enddo
+
+    psir_c = 4.d0 * pi * G * psir_c * 1e6
+
+  end subroutine grav_pot_poly_core
+
+!******************************************************************************
+! pressure: Calculates pressure using equation (52) of Francis Nimmo's revised
+!           treatise article on Energetics of the core
+!
+! Inputs: Ni - Index for ICB
+!         Nc - Index for CMB
+!         Pc - Pressure at centre of Earth
+!******************************************************************************
+  subroutine pressure_core(Ni,Nc,Pc)
+
+    integer, intent(in) :: Nc,Ni
+    double precision    :: p1, p2(0:Nc), fac, Pc
+
+    fac = 4.d0*pi*G*rho_cen*rho_cen/3.d0
+
+    p1 = ( (3.d0*r2_c(Nc)/10.d0) - L2/5.d0 ) * dexp(-r2_c(Nc)/L2)
+    p2 = ( (3.d0*r2_c    /10.d0) - L2/5.d0 ) * dexp(-r2_c/L2)
+
+!   Test for a NaN, which can arise is r2(0) and L2 = 0, i.e. 0/0=NaN
+    if(p2(0) .ne. p2(0)) p2(0) = 0.d0   
+
+    pr_c  = Pc + fac * (p1 - p2)
+
+  end subroutine pressure_core
+
+!******************************************************************************
+! pressure_poly: Calculates pressure using equation (13) of Davies (2014, PEPI) 
+!
+! Inputs: Ni - Index for ICB
+!         N  - Index for CMB
+!         Pc - Pressure at centre of Earth
+!******************************************************************************
+  subroutine pressure_poly_core(Ni, N, Pc)
+
+    double precision, intent(in)  :: Pc
+    integer         , intent(in)  :: N, Ni
+    double precision              :: one_coeff, two_coeff, three_coeff, four_coeff, five_coeff, six_coeff, seven_coeff
+    double precision              :: P_icb, P_cmb, P_icbi
+
+    pr_c = 0.d0
+
+    one_coeff    =       rho0_oc*rho0_oc/6.d0
+    two_coeff    = 7.d0 *rho0_oc*rho1_oc/36.d0
+    three_coeff  = 2.d0 *rho0_oc*rho2_oc/15.d0  +      rho1_oc*rho1_oc/16.d0
+    four_coeff   =       rho0_oc*rho3_oc/10.d0  + 9.d0*rho1_oc*rho2_oc/100.d0
+    five_coeff   = 5.d0 *rho1_oc*rho3_oc/72.d0  +      rho2_oc*rho2_oc/30.d0
+    six_coeff    = 11.d0*rho2_oc*rho3_oc/210.d0
+    seven_coeff  =       rho3_oc*rho3_oc/42.d0
+
+    P_icb        =  4.d6 * pi * G * (one_coeff  *(r2_c(Ni+1)/1e6)  + two_coeff *(r3_c(Ni+1)/1e9)  + & 
+                   three_coeff*(r4_c(Ni+1)/1e12) + four_coeff *(r5_c(Ni+1)/1e15) + five_coeff*(r6_c(Ni+1)/1e18) + & 
+                   six_coeff  *(r7_c(Ni+1)/1e21) + seven_coeff*(r8_c(Ni+1)/1e24))
+
+    P_cmb        =  4.d6 * pi * G * (one_coeff  *(r2_c(N)/1e6)      + two_coeff *(r3_c(N)/1e9)     + three_coeff*(r4_c(N)/1e12) + &
+                   four_coeff *(r5_c(N)/1e15)    + five_coeff*(r6_c(N)/1e18)    + six_coeff  *(r7_c(N)/1e21)    + &
+                   seven_coeff*(r8_c(N)/1e24))
+
+    if(Ni > 0)  then
+      pr_c(Ni+1:N)   = Pc + P_cmb -4.d6 * pi * G * &
+                     (one_coeff  *(r2_c(Ni+1:N)/1e6)  + two_coeff *(r3_c(Ni+1:N)/1e9)  + three_coeff*(r4_c(Ni+1:N)/1e12) + &
+                     four_coeff *(r5_c(Ni+1:N)/1e15) + five_coeff*(r6_c(Ni+1:N)/1e18) + six_coeff  *(r7_c(Ni+1:N)/1e21) + &
+                     seven_coeff*(r8_c(Ni+1:N)/1e24)) 
+
+      one_coeff    =      rho0_ic*rho0_ic/6.d0
+      two_coeff    = 8.d0*rho0_ic*rho2_ic/60.d0
+      three_coeff  =      rho2_ic*rho2_ic/30.d0
+
+      P_icbi       = 4.d6 * pi * G * (one_coeff*(r2_c(Ni)/1e6) + two_coeff*(r4_c(Ni)/1e12) + three_coeff*(r6_c(Ni)/1e18))
+
+      pr_c(0:Ni)     = Pc + P_cmb - P_icb + P_icbi -4.d6 * pi * G * (one_coeff*(r2_c(0:Ni)/1e6) + two_coeff*(r4_c(0:Ni)/1e12) + & 
+                                                               three_coeff*(r6_c(0:Ni)/1e18)) 
+
+    else
+      pr_c(0:N)   = Pc + P_cmb -4.d6 * pi * G * &
+                     (one_coeff  *(r2_c(0:N)/1e6)  + two_coeff *(r3_c(0:N)/1e9)  + three_coeff*(r4_c(0:N)/1e12) + &
+                     four_coeff *(r5_c(0:N)/1e15) + five_coeff*(r6_c(0:N)/1e18) + six_coeff  *(r7_c(0:N)/1e21) + &
+                     seven_coeff*(r8_c(0:N)/1e24))
+    endif
+
+  end subroutine pressure_poly_core
+
+!******************************************************************************
+! mass: The mass of the outer core (M_oc) and whole core (M_c) using equation (44) 
+!       of Francis Nimmo's revised treatise article on Energetics of the core
+!
+! Inputs: Ni - Index for ICB
+!         Nc - Index for CMB
+!******************************************************************************
+
+  subroutine mass_core(Ni,Nc)
+
+    integer, intent(in) :: Nc,Ni
+    double precision    :: fac1, fac2
+
+    M_c  = 0.d0
+    M_oc = 0.d0  
+
+    M_c   =      4.d0*pi*rho_cen*r3_c(Nc)*dexp(-r2_c(Nc)/L2)*(1.d0 + 0.4d0*(r2_c(Nc)/L2))/3.d0
+    M_oc  = M_c - 4.d0*pi*rho_cen*r3_c(Ni)*dexp(-r2_c(Ni)/L2)*(1.d0 + 0.4d0*(r2_c(Ni)/L2))/3.d0
+
+    write(*,'(A16,E16.6)') 'M_oc=',M_oc
+    write(*,'(A16,E16.6)') 'M_c =',M_c
+
+    M_c  = 0.d0
+    M_oc = 0.d0
+
+    fac1 = (-L2 * r_c(N) * dexp(-r2_c(N)/L2))/2.d0 + (L3 * dsqrt(pi) * derf(r_c(N)/L))/ 4.d0
+    fac2 = (-L2 * r_c(0) * dexp(-r2_c(0)/L2))/2.d0 + (L3 * dsqrt(pi) * derf(r_c(0)/L))/ 4.d0
+
+    M_c = 4.d0 * pi * rho_cen * (fac1 - fac2)
+
+    fac1 = (-L2 * r_c(Ni) * dexp(-r2_c(Ni)/L2))/2.d0 + (L3 * dsqrt(pi) * derf(r_c(Ni)/L))/4.d0
+    fac2 = (-L2 * r_c(0)  * dexp(-r2_c(0)/L2)) /2.d0 + (L3 * dsqrt(pi) * derf(r_c(0)/L)) /4.d0
+
+    M_oc = M_c - 4.d0 * pi * rho_cen * (fac1 - fac2)
+
+    write(*,'(A16,E16.6)') 'M_oc=',M_oc
+    write(*,'(A16,E16.6)') 'M_c =',M_c
+
+  end subroutine mass_core 
+
+!******************************************************************************
+! mass: Calculates the mass of the inner core (Mic) and outer core (M_oc) using 
+!       equations (8) and (9) of Davies (2014, PEPI, submitted)
+!
+! Inputs: Ni - Index for ICB
+!         Nc - Index for CMB
+!******************************************************************************
+  subroutine mass_poly_core(Ni,N)
+
+    integer, intent(in) :: N,Ni
+    double precision    :: M_oc_cmb, M_oc_icb, Mic_icb 
+
+    M_oc_cmb = rho0_oc*(r3_c(N) /1e9)/3.d0    + rho1_oc*(r4_c(N) /1e12)/4.d0   + & 
+               rho2_oc*(r5_c(N) /1e15)/5.d0   + rho3_oc*(r6_c(N) /1e18)/6.d0
+    M_oc_icb = rho0_oc*(r3_c(Ni+1)/1e9)/3.d0  + rho1_oc*(r4_c(Ni+1)/1e12)/4.d0 + & 
+               rho2_oc*(r5_c(Ni+1)/1e15)/5.d0 + rho3_oc*(r6_c(Ni+1)/1e18)/6.d0
+    M_oc     = 4.d0 * pi * (M_oc_cmb - M_oc_icb) * 1e9
+
+    Mic_icb = rho0_ic*(r3_c(Ni)/1e9)/3.d0 + rho2_ic*(r5_c(Ni)/1e15)/5.d0
+    M_ic    = 4.d0 * pi * (Mic_icb) * 1e9
+
+    M_c = M_oc + M_ic
+
+    write(*,'(A16,E16.6)') 'M_oc=',M_oc
+    write(*,'(A16,E16.6)') 'M_c =',M_c
+
+  end subroutine mass_poly_core
+
+!******************************************************************************
+! mass_poly_correct: Correct for changes in the core mass over time. 
+!                 Assume mass of IC is constant. 
+!
+! Inputs: Ni - Index for ICB
+!         Nc - Index for CMB
+!******************************************************************************
+
+  subroutine mass_poly_correct(ri)
+
+    double precision, intent(in) :: ri
+    double precision             :: rho_new, fac, ic, oc1, oc2 
+
+    if(ri == ri0) return
+
+    fac =  3.d0 / ( (rc*rc*rc/1e9) - (ri*ri*ri/1e9) )
+
+    oc1 = rho0_oc*( (rc*rc*rc/1e9) - (ri0*ri0*ri0)/1e9)/3.d0
+
+    oc2 = rho1_oc*( (ri0*ri0*ri0*ri0/1e12)         - (ri*ri*ri*ri/1e12) )/4.d0 + & 
+          rho2_oc*( (ri0*ri0*ri0*ri0*ri0/1e15)     - (ri*ri*ri*ri*ri)/1e15 )/5.d0 + & 
+          rho3_oc*( (ri0*ri0*ri0*ri0*ri0*ri0/1e18) - (ri*ri*ri*ri*ri*ri)/1e18 )/6.d0
+
+    ic  = rho0_ic*( (ri0*ri0*ri0/1e9)          - (ri*ri*ri)/1e9  )/3.d0 + & 
+          rho2_ic*( (ri0*ri0*ri0*ri0*ri0/1e15) - (ri*ri*ri*ri*ri)/1e15 )/5.d0 
+
+    rho_new = (oc1 - oc2 + ic) * fac
+    rho0_oc = rho_new
+
+  end subroutine mass_poly_correct
+
+!******************************************************************************
+! melting: The melting curve using equation (54)
+!       of Francis Nimmo's revised treatise article on Energetics of the core
+!******************************************************************************
+
+  subroutine melting_core()
+
+    Tm_c    = Tm0_c * (1.d0 + Tm1_c*pr_c + Tm2_c*pr_c*pr_c) - meltdep
+    dTmdP_c = Tm0_c * (       Tm1_c   + 2.d0*Tm2_c*pr_c)
+
+  end subroutine melting_core
+
+!******************************************************************************
+! melting: The melting curve using equation (3)
+!          of Williams & Nimmo 2004 
+!******************************************************************************
+
+  subroutine melting_mars(cbar)
+
+    double precision, intent(in) :: cbar
+
+    Tm_c    = Tm0_c * (1.d0 - cbar*meltdep) * (1.d0 + Tm1_c*pr_c/1e9 + Tm2_c*pr_c*pr_c/1e18 + Tm3_c*pr_c*pr_c*pr_c/1e27)
+    dTmdP_c = Tm0_c * (1.d0 - cbar*meltdep) * (       Tm1_c     + 2.d0*Tm2_c*pr_c/1e9  + 3.d0*Tm3_c*pr_c*pr_c/1e18)
+
+  end subroutine melting_mars
+
+!******************************************************************************
+! melting_poly: The melting curve using equation (16) of Davies (2014, submitted
+!               to PEPI)
+!******************************************************************************
+  subroutine entropy_melting()
+
+    ds_c = 0.d0
+
+    ds_c = ds0_c + ds1_c*(pr_c/1e9) + ds2_c*(pr_c*pr_c)/1e18 + ds3_c*(pr_c*pr_c*pr_c)/1e27 + ds4_c*(pr_c*pr_c*pr_c*pr_c)/1e36
+
+  end subroutine entropy_melting
+
+!******************************************************************************
+! melting_poly: The melting curve using equation (16) of Davies (2014, submitted 
+!               to PEPI)
+!******************************************************************************
+  subroutine melting_poly_core()
+
+    Tm_c = 0.d0; dTmdP_c = 0.d0
+
+    Tm_c    = Tm0_c + Tm1_c*(pr_c/1e9) + Tm2_c*(pr_c*pr_c)/1e18 + Tm3_c*(pr_c*pr_c*pr_c)/1e27 + Tm4_c*(pr_c*pr_c*pr_c*pr_c)/1e36
+    dTmdP_c =         Tm1_c            + 2.d0*Tm2_c*pr_c/1e9    + 3.d0*Tm3_c*pr_c*pr_c/1e18   + 4.d0*Tm4_c*(pr_c*pr_c*pr_c)/1e27
+    dTmdP_c = dTmdP_c / 1e9
+    Tm_c    = Tm_c - meltdep
+
+  end subroutine melting_poly_core
+
+!******************************************************************************
+! Solid_conc: get cS from cL
+!******************************************************************************
+  subroutine solid_conc(cl, lambdal, lambdas, dmu, cs)
+
+    double precision, intent(in)  :: cl, lambdal, lambdas, dmu
+    double precision, intent(out) :: cs
+    double precision              :: xmin, xmax, TmFe, dsri
+
+    xmin = 0.1d-10
+    xmax = 1.2d0
+    TmFe = Tm_c(Ni+1)
+    dsri = ds_c(Ni+1)
+
+    if(ri0 < 1e-10) then
+      TmFe = Tm_c(0)
+      dsri = ds_c(0)
+    endif
+
+    cs = 0.d0
+    if(cl==0.d0) then 
+      cs = 0.d0
+      return
+    endif
+
+    cs = rtbis(xmin, xmax, 1d-10, lambdal, lambdas, dmu ,cl ,TmFe, dsri)
+
+  end subroutine solid_conc
+
+  double precision function f(x,lambdal,lambdas,dmu,cl,TmFe,dSFe)
+    implicit none
+
+    double precision, intent(in) :: x, TmFe, dSFe, cl, lambdas, lambdal, dmu
+
+    f  = dmu + lambdal*cl - lambdas*x  - kb*TmFe*dlog(x/cl)*( dSFe + (x-cl) ) /dSFe
+
+  end function f
+
+  double precision function rtbis( x1, x2, xacc, lambdal,lambdas,dmu,cl,TmFe,dSFe)
+
+    integer , parameter :: n=200
+    integer             :: i
+    double precision    :: x1, x2, xacc
+    double precision    :: fst, fmid, dx, xmid
+    double precision, intent(in) :: TmFe, dSFe, cl, lambdas, lambdal, dmu
+
+    fmid = f(x2,lambdal,lambdas,dmu,cl,TmFe,dSFe)
+    fst  = f(x1,lambdal,lambdas,dmu,cl,TmFe,dSFe)
+
+    if(fst*fmid .ge. 0.d0) stop 'Root must be bracketed for bisection'
+
+    if(fst .le. 0.d0) then
+      rtbis = x1
+      dx   = x2-x1
+    else
+      rtbis = x2
+     dx   = x1-x2
+    endif
+
+    do i = 1, n
+      dx = dx * 0.5d0
+      xmid = rtbis + dx
+      fmid = f(xmid,lambdal,lambdas,dmu,cl,TmFe,dSFe)
+
+      if(fmid .le. 0.d0) rtbis=xmid
+      if(dabs(dx) .lt. xacc .or. fmid .eq. 0.d0) return
+    enddo
+
+  end function rtbis
+
+!******************************************************************************
+! melting_pt_dep: The melting point depression for each light element
+!******************************************************************************
+  subroutine melting_pt_dep(cl, cs, dTm)
+
+!    integer         , intent(in)  :: N
+    double precision, intent(in)  :: cs, cl
+    double precision, intent(out) :: dTm(0:N)
+
+    dTm = 0.d0
+    dTm = (Tm_c/ds_c) *  (cs - cl)
+
+  end subroutine melting_pt_dep
+
+!******************************************************************************
+! conductivity: Thermal conductivity using equation (69)
+!       of Francis Nimmo's revised treatise article on Energetics of the core
+!******************************************************************************
+  subroutine conductivity_core()
+
+    kr_c = k0_oc*(1.d0 - r2_c/k1_oc**2)/(1.d0 - r2_c(N)/k1_oc**2)
+
+    write(*,'(A16,E16.6)') 'k(ro)=',kr_c(N)
+
+  end subroutine conductivity_core
+
+!******************************************************************************
+! conductivity_poly: Thermal conductivity using equation (17)
+!       of Davies (2014, submitted to PEPI)
+!******************************************************************************
+  subroutine conductivity_poly_core()
+
+    integer :: i
+
+    do i = 0, N
+      kr_c(i) =  k2_oc*r_c(i)*r_c(i)/1e6 + k1_oc*r_c(i)/1e3 + k0_oc
+    enddo
+
+    write(*,'(A16,E16.6)') 'k(ro)=',kr_c(N)
+
+  end subroutine conductivity_poly_core
+
+!******************************************************************************
+! ricalc: find the position  of the ICB from the intersection of Ta and Tm
+!
+! Inputs: N - total number of gridpoints
+!
+! Outputs: ri - ICB radius
+!******************************************************************************
+  subroutine ricalc(N,ri)
+
+    implicit none
+
+    integer, intent(in)           :: N
+    double precision, intent(out) :: ri
+    double precision              :: Tdiff
+    integer                       :: i, ript
+
+    Tdiff  = 0.d0
+
+!   The two T profiles are on the same grid at each time pt
+!   so we can just compare then pointwise
+
+    ript = 0
+    a: do i = 0, N
+         Tdiff = Tar_c(i) - Tm_c(i)
+         if(Tdiff .ge. 0.d0 ) then
+           ript   = i
+           exit a
+         endif
+       enddo a
+
+    ri = r_c(ript)
+
+!   ceiling rounds up. Was getting ri = rc-1e-7!
+    if(ceiling(ri) .ge. rc) stop "ri > rc!"
+
+    write(*,'(A16,E16.6,I16)') 'ri =',ri, ript
+
+  end subroutine ricalc 
+ 
+!******************************************************************************
+! rscalc: find the position  of the ICB from the intersection of Ta and Tm
+!
+! Inputs: N - total number of gridpoints
+!
+! Outputs: rs - Outer Boundary radius
+!******************************************************************************
+  subroutine rscalc(N, rt, rm1, rm2, rb)
+
+    implicit none
+
+    integer, intent(in)           :: N
+    double precision, intent(out) :: rt, rm1, rm2, rb
+    double precision              :: Tdiff
+    integer                       :: rspt1, rspt2, rspt3, rspt4, i
+    integer                       :: rspta, rsptb, rsptc, rsptd
+
+!   Check that we are not liquid at the top
+!   In 'Earth' case this would mean whole core is solid
+!    if( Tm_c(N) > Tar_c(N) ) return
+
+    Tdiff  = 0.d0
+
+!   The two T profiles are on the same grid at each time pt
+!   so we can just compare then pointwise
+    rspt1=0; rspt2=0; rspt3=0; rspt4=0
+    rspta=0; rsptb=0; rsptc=0; rsptd=0    
+    do i = N, 0, -1
+      Tdiff = Tar_c(i) - Tm_c(i)
+      if( (Tdiff > 0.d0) .and. (rspta==0) ) then
+        rspt1   = i
+        rspta   = 1
+      endif
+      if( (Tdiff < 0.d0) .and. (rspta==1) .and. (rsptb==0) ) then
+        rspt2   = i
+        rsptb   = 1
+      endif
+    enddo 
+
+    do i = 0, N
+      Tdiff = Tar_c(i) - Tm_c(i)
+      if( (Tdiff > 0.d0) .and. (rsptc==0) ) then
+        rspt3   = i
+        rsptc   = 1
+      endif
+      if( (Tdiff < 0.d0) .and. (rsptc==1) .and. (rsptd==0) ) then
+        rspt4   = i
+        rsptd   = 1
+      endif
+    enddo
+
+    rt  = r_c(rspt1)
+    rm1 = r_c(rspt2)
+    rm2 = r_c(rspt4-1)
+    rb  = r_c(rspt3)
+
+!    rs = r_c(rspt)
+!    write(*,*) 'rs = ', r_c(rspt)
+
+!   NOTE
+!   Dont set this yet as not sure of repurcussions!!
+!    rs = r_c(rspt)
+
+!    if(ri > rc) stop "ri > rc!"
+
+!    write(*,'(A16,E16.6,I16)') 'rs =',rs, rspt
+
+  end subroutine rscalc
+
+
+!******************************************************************************
+! crfac: Calculate Cr using equation (50)
+!       of Francis Nimmo's revised treatise art`icle on Energetics of the core
+!
+! Inputs: Ni - Index for ICB radius
+!         Tc - CMb temperature
+!         ri - Current ICB radius
+!  
+! Outputs: Cr
+!******************************************************************************
+  subroutine crfac(Ni,Tc,ri,Cr)
+
+    integer, intent(in)           :: Ni
+    double precision, intent(in)  :: Tc,ri
+    double precision, intent(out) :: Cr
+    double precision :: dTadP
+
+!   If the temperature at the centre of the Earth is not below the 
+!   melting temperature at the same pressure then we have no IC
+    if(ri==0.d0) then 
+      dTadP = 0.d0
+      Cr = 0.d0
+    else
+      dTadP = -dTadr_c(Ni+1)/(rhor_c(Ni+1)*gr_c(Ni+1)) !Adiabat at ICB
+      Cr    = -(Tar_c(Ni+1)/Tc)*(1.d0/(rhor_c(Ni+1)*gr_c(Ni+1)))*(1.d0/(dTmdP_c(Ni+1) - dTadP))  
+    endif
+
+    write(*,'(A16,E16.6)') 'Cr =',Cr
+
+    write(14,'(10E16.6)') dTadP, dTmdP_c(Ni+1),rhor_c(Ni+1),Tar_c(Ni+1),gr_c(Ni+1),pr_c(Ni+1),Cr,dTadr_c(Ni+1), & 
+                         -dTmdP_c(Ni+1)*rhor_c(Ni+1)*gr_c(Ni+1), T_cen
+
+  end subroutine crfac
+
+!******************************************************************************
+! ccfac: Calculate Cc using equation (51)
+!        of Francis Nimmo's revised treatise article on Energetics of the core
+!
+! Inputs: Ni - Index for ICB
+!         conc - O concentration
+!
+! Outputs: Cc
+!******************************************************************************
+  subroutine ccfac(Ni, cl, cs, Cc)
+
+    integer, intent(in) :: Ni
+    double precision, intent(in)  :: cl, cs
+    double precision, intent(out) :: Cc
+
+    Cc = 0.d0
+    Cc = 4.d0*pi*r2_c(Ni+1)*rhor_c(Ni+1) * (cl  - cs) / M_oc
+
+    write(*,'(A16,E16.6)') 'Cc =',Cc
+
+  end subroutine ccfac
+
+!******************************************************************************
+! dcdt: Calculate the time change of concentration, dcdt, using equation (51)
+!       of Francis Nimmo's revised treatise article on Energetics of the core
+!
+! Inputs: Cc - (see ccfac)
+!         Cr - (see crfac)
+!         dTcdt - CMB cooling rate
+!         conc - O ocncentration
+!         forback - Going forwards (=1) or backwards (=2) in time
+!******************************************************************************
+  subroutine dcdt(Cc, Cr, dTcdt, conc, forback)
+
+    double precision, intent(in)  :: Cc, Cr, dTcdt
+    double precision, intent(out) :: conc
+    double precision              :: dconcdt 
+    integer                       :: forback
+
+    dconcdt = Cc * Cr * dTcdt * secinyr
+
+    if(forback==1) conc    = conc + dconcdt * dt
+    if(forback==2) conc    = conc - dconcdt * dt
+
+    write(*,'(A16, E16.6)') 'Dc/Dt = ', dconcdt
+
+  end subroutine dcdt
+
+!******************************************************************************
+! drhodt: Calculate time change of density. Assumes thermal and pressure 
+!         contributions are negligible
+!******************************************************************************
+  subroutine drhodt(dconcdt,alphac)
+
+    double precision, intent(in) :: dconcdt, alphac
+    double precision             :: ddensitydt
+
+    ddensitydt = dconcdt * rhor_c(N) * alphac
+
+    write(14,'(A16, E16.6)') 'D(rho)/Dt = ', ddensitydt
+
+  end subroutine drhodt
+
+! Always take secular over whole core
+! Assumes T profile in layer does not deviate much from adiabat
+  subroutine secular_core(N,Tc,Qs,Es)
+
+    integer, intent(in) :: N  
+    double precision, intent(in)  :: Tc
+    double precision, intent(out) :: Qs, Es  
+    double precision :: Is1, Is2, Is
+
+    Is1 = -A2 * r_c(N)    * dexp(-(r_c(N)*r_c(N))/A2)/2.d0
+    Is2 =  A3 * dsqrt(pi) * derf(  r_c(N)/A) /4.d0
+    Is  = 4.d0*pi*T_cen*rho_cen*(Is1 + Is2)
+    Qs  = -cp_c * Is          /Tc
+    Es  =  cp_c * (M_c-(Is/Tc)) /Tc
+
+  end subroutine secular_core
+
+  subroutine secular_poly_core(N,Ni,Tc,Qs,Es)
+
+    integer, intent(in)           :: N, Ni
+    double precision, intent(in)  :: Tc
+    double precision, intent(out) :: Qs, Es
+    double precision              :: one_coeff, two_coeff, three_coeff, four_coeff, five_coeff, six_coeff, seven_coeff
+    double precision              :: Soc_cmb, Soc_icb, Sic_icb, int_rhoT_dV
+
+    one_coeff=0.d0; two_coeff=0.d0; three_coeff=0.d0; four_coeff=0.d0; five_coeff=0.d0; six_coeff=0.d0; seven_coeff=0.d0
+
+    one_coeff    = rho0_oc*T_cen
+    two_coeff    = rho0_oc*T_cen*t1_c   + rho1_oc*T_cen
+    three_coeff  = rho2_oc*T_cen      + rho1_oc*T_cen*t1_c   + rho0_oc*T_cen*t2_c
+    four_coeff   = rho2_oc*T_cen*t1_c   + rho1_oc*T_cen*t2_c   + rho3_oc*T_cen    + rho0_oc*T_cen*t3_c
+    five_coeff   = rho2_oc*T_cen*t2_c   + rho3_oc*T_cen*t1_c   + rho1_oc*T_cen*t3_c
+    six_coeff    = rho3_oc*T_cen*t2_c   + rho2_oc*T_cen*t3_c
+    seven_coeff  = rho3_oc*T_cen*t3_c
+
+    Soc_cmb = one_coeff*(r3_c(N)/1e9)/3.d0  +  two_coeff*(r4_c(N)/1e12)/4.d0 + three_coeff*(r5_c(N)/1e15)/5.d0 + & 
+              four_coeff*(r6_c(N)/1e18)/6.d0 + five_coeff*(r7_c(N)/1e21)/7.d0 + six_coeff*(r8_c(N)/1e24)/8.d0 + & 
+              seven_coeff*(r9_c(N)/1e27)/9.d0
+    Soc_icb = one_coeff*(r3_c(Ni)/1e9)/3.d0  +  two_coeff*(r4_c(Ni)/1e12)/4.d0 + three_coeff*(r5_c(Ni)/1e15)/5.d0 + &
+              four_coeff*(r6_c(Ni)/1e18)/6.d0 + five_coeff*(r7_c(Ni)/1e21)/7.d0 + six_coeff*(r8_c(Ni)/1e24)/8.d0 + &
+              seven_coeff*(r9_c(Ni)/1e27)/9.d0
+
+    one_coeff=0.d0; two_coeff=0.d0; three_coeff=0.d0; four_coeff=0.d0; five_coeff=0.d0; six_coeff=0.d0; seven_coeff=0.d0
+
+    one_coeff    = rho0_ic*T_cen
+    two_coeff    = rho0_ic*T_cen*t1_c   
+    three_coeff  = rho2_ic*T_cen      + rho0_ic*T_cen*t2_c
+    four_coeff   = rho2_ic*T_cen*t1_c   + rho0_ic*T_cen*t3_c
+    five_coeff   = rho2_ic*T_cen*t2_c 
+    six_coeff    = rho2_ic*T_cen*t3_c 
+
+    Sic_icb = one_coeff*(r3_c(Ni)/1e9)/3.d0  +  two_coeff*(r4_c(Ni)/1e12)/4.d0 + three_coeff*(r5_c(Ni)/1e15)/5.d0 + &
+              four_coeff*(r6_c(Ni)/1e18)/6.d0 + five_coeff*(r7_c(Ni)/1e21)/7.d0 + six_coeff*(r8_c(Ni)/1e24)/8.d0 
+
+!    write(123,*) Soc_cmb*1e9, Soc_icb*1e9, Sic_icb*1e9, int_rhoT_dV/Tc
+
+    int_rhoT_dV = 4.d0 * pi * (Soc_cmb - Soc_icb + Sic_icb) * 1e9
+
+    Qs = -cp_c * int_rhoT_dV / Tc
+
+    Es =  cp_c * (M_c - int_rhoT_dV/Tc) /Tc
+
+  end subroutine secular_poly_core
+
+  subroutine radiogenic_decay_core(time, h0_c, h)
+
+    double precision, intent(in)    :: time, h0_c
+    double precision, intent(inout) :: h
+    double precision                :: t
+
+    t = (ttot/1e6) - time
+
+    h = h0_c * 2**(t/hl)
+
+  end subroutine radiogenic_decay_core
+
+  subroutine radiogenic_decay2(time, h0, h)
+
+    double precision, intent(in)    :: time, h0
+    double precision, intent(inout) :: h
+
+    h = h0 * 2**(-time/hl)
+
+  end subroutine radiogenic_decay2
+
+  subroutine radiogenic_core(N,Tc,h,Qr,Er)
+
+    integer, intent(in)           :: N
+    double precision              :: It1_c, It2_c, It
+    double precision, intent(in)  :: Tc, h    
+    double precision, intent(out) :: Qr, Er
+
+    It1_c = 1.0d0
+    It2_c = 0.6d0 * r2_c(N)/B2
+    It  = 4.d0*pi*rho_cen*r3_c(N)*(It1_c - It2_c)/(3.d0*T_cen)
+    Qr  = M_c*h
+    Er  = ((M_c/Tc) - It)*h
+
+  end subroutine radiogenic_core
+
+  subroutine radiogenic_poly_core(N,Tc,h,Qr,Er)
+
+    integer, intent(in)           :: N
+    double precision, intent(in)  :: Tc, h
+    double precision, intent(out) :: Qr, Er
+!    double precision              :: Q, R1, R2, R3, S1, S2, S3, J1, J2, J3
+    double precision              :: integrand(0:N)
+    integer :: i
+
+    Qr = M_c*h
+
+!    Q = rho3_oc/t3_c
+!
+!    R1 = rho2_oc - Q*t2_c
+!    R2 = rho1_oc - Q*t1_c
+!    R3 = rho0_oc - Q*T_cen
+
+!    S1 = R2 - R1*t2_c/t3_c
+!    S2 = R3 - R1*t1_c/t3_c
+!    S3 =    - R1*T_cen/t3_c
+
+!    J1 = S2 - S1*t2_c/t3_c
+!    J2 = S3 - S1*t1_c/t3_c
+!    J3 =      S1*T_cen/t3_c
+
+    do i = 0, N
+      integrand(i) = r_c(i)*r_c(i)*rhor_c(i)*(1.d0/Tar_c(N) - 1.d0/Tar_c(i))
+    enddo
+    call splat(integrand,r_c,N)
+    Er=4.d0*pi*integrand(N-1)*h!1.d12
+
+  end subroutine radiogenic_poly_core
+
+!I see that you have put the latent heat in the table back to 0.75, are you sure about that ?
+!with an entropy of melting of 1.05 and a temperature of 6350 K it seems to me that T\Delta S 
+!should be 0.99.
+
+  subroutine lh_coeff_core(L)
+
+    double precision, intent(out) :: L
+
+    L = 0.d0
+    L = Tm_c(Ni+1) * ds_c(Ni+1) * 1.3806488e-23 * Na * 1000.d0  / AFe
+
+!    write(123,*) r_c(Ni+1), L, Tm_c(Ni+1),  ds_c(Ni+1)
+    L = 0.75e6
+
+  end subroutine lh_coeff_core
+
+  subroutine latent_core(Ni,L,Tc,dridt,Ql,El)
+
+    integer         , intent(in)  :: Ni 
+    double precision, intent(in)  :: Tc, dridt, L
+    double precision, intent(out) :: Ql, El
+
+    Ql = 4.d0*pi*r2_c(Ni+1)*L*rhor_c(Ni+1)*dridt
+
+    El = Ql*(Tar_c(Ni+1)-Tc)/(Tar_c(Ni+1)*Tc)
+
+  end subroutine latent_core
+
+  subroutine gravitational_core(N, Ni, Tc, Cr, Cc, alphac, Qg, Eg)
+
+    integer, intent(in)           :: N,Ni  
+    double precision              :: C2, t1_c_rc, t2_c_rc, t1_c_ri, t2_c_ri
+    double precision, intent(in)  :: Tc, Cr, Cc, alphac
+    double precision, intent(out) :: Qg, Eg 
+    double precision              :: int_rhopsi_oc, fac
+
+    C2 = 3.d0*L2/16.d0 - r2_c(N)*(1.d0 - (3.d0*r2_c(N))/(10.d0*L2))/2.d0
+
+    t1_c_rc = (3.d0*r5_c(N)/20.d0  - L2*r3_c(N)/8.d0 - L2*C2*r_c(N)) * dexp(-r2_c(N)/L2)
+    t2_c_rc = (C2*L3*dsqrt(pi)/2.d0)                             * derf(r_c(N)/L)
+    t1_c_ri = (3.d0*r5_c(Ni)/20.d0 - L2*r3_c(Ni)/8.d0 - L2*C2*r_c(Ni)) * dexp(-r2_c(Ni)/L2)
+    t2_c_ri = (C2*L3*dsqrt(pi)/2.d0)                             * derf(r_c(Ni)/L)
+
+    fac =  8.d0*pi*pi*rho_cen*rho_cen*G/3.d0
+
+    int_rhopsi_oc = fac*(t1_c_rc + t2_c_rc - t1_c_ri - t2_c_ri)
+
+    Qg = Cc * Cr  * alphac * (int_rhopsi_oc - M_oc*psir_c(Ni))
+
+    Eg = Qg/Tc
+
+  end subroutine gravitational_core
+
+! ASSUMES - Only O contributes to the density jump. 
+  subroutine gravitational_poly_core(N, Ni, Tc, Cr, Cc, alphac, Qg, Eg)
+
+    integer, intent(in)           :: N,Ni
+    double precision, intent(in)  :: Tc, Cr, Cc, alphac
+    double precision, intent(out) :: Qg, Eg
+
+    double precision    :: gpot_cmb,rho_psicmb_cmb,rho_psicmb_icb,rho_psi_cmb, rho_psi_icb
+    double precision    :: five_coeff,six_coeff,seven_coeff,eight_coeff,nine_coeff,ten_coeff,eleven_coeff
+    double precision    :: int_rhopsi_dV
+
+    gpot_cmb=0.d0; rho_psicmb_cmb=0.d0; rho_psicmb_icb=0.d0; rho_psi_cmb=0.d0; rho_psi_icb=0.d0
+
+!    gpot_cmb = -rho0_oc*(r2_c(N)/1e6)/6.d0   - rho1_oc*(r3_c(N)/1e9)/12.d0 - &
+!                rho2_oc*(r4_c(N)/1e12)/20.d0 - rho3_oc*(r5_c(N)/1e15)/30.d0
+
+!    gpot_icb = rho0_oc*(r2_c(Ni+1)/1e6)/6.d0   + rho1_oc*(r3_c(Ni+1)/1e9)/12.d0 + &
+!               rho2_oc*(r4_c(Ni+1)/1e12)/20.d0 + rho3_oc*(r5_c(Ni+1)/1e15)/30.d0
+
+!    gpot_icbi= rho0_ic*(r2_c(Ni  )/1e6)/6.d0   + &
+!               rho2_ic*(r4_c(Ni  )/1e12)/20.d0
+
+    gpot_cmb = -(rho0_oc*(r2_c(N)/1e6)/6.d0      + rho1_oc*(r3_c(N)/1e9)/12.d0 + &
+                 rho2_oc*(r4_c(N)/1e12)/20.d0    + rho3_oc*(r5_c(N)/1e15)/30.d0)! - &
+!               gpot_icb + gpot_icbi)
+
+    rho_psicmb_cmb = gpot_cmb*(rho0_oc*(r3_c(N)/1e9)/3.d0   + rho1_oc*(r4_c(N)/1e12)/4.d0  + & 
+                               rho2_oc*(r5_c(N)/1e15)/5.d0  + rho3_oc*(r6_c(N)/1e18)/6.d0) 
+    rho_psicmb_icb = gpot_cmb*(rho0_oc*(r3_c(Ni)/1e9)/3.d0  + rho1_oc*(r4_c(Ni)/1e12)/4.d0 + & 
+                               rho2_oc*(r5_c(Ni)/1e15)/5.d0 + rho3_oc*(r6_c(Ni)/1e18)/6.d0)
+
+    five_coeff   = rho0_oc*rho0_oc/30.d0
+    six_coeff    = rho0_oc*rho1_oc/24.d0
+    seven_coeff  = rho1_oc*rho1_oc/84.d0  + rho0_oc*rho2_oc*13.d0/420.d0
+    eight_coeff  = rho1_oc*rho2_oc/60.d0  + rho0_oc*rho3_oc/40.d0
+    nine_coeff   = rho2_oc*rho2_oc/180.d0 + 7.d0*rho1_oc*rho3_oc/540.d0
+    ten_coeff    = rho2_oc*rho3_oc/120.d0 
+    eleven_coeff = rho3_oc*rho3_oc/330.d0 
+
+    rho_psi_cmb = five_coeff*(r5_c(N)/1e15) + six_coeff*(r6_c(N)/1e18)  + seven_coeff*(r7_c(N)/1e21) + & 
+                  eight_coeff*(r8_c(N)/1e24)+ nine_coeff*(r9_c(N)/1e27) + ten_coeff*(r10_c(N)/1e30)  + & 
+                  eleven_coeff*(r11_c(N)/1e33)
+
+!    five_coeff   = rho0_ic*rho0_oc/30.d0
+!    six_coeff    = rho0_ic*rho1_oc/36.d0
+!    seven_coeff  = rho0_ic*rho2_oc/42.d0  + rho2_ic*rho0_oc/140.d0
+!    eight_coeff  = rho0_ic*rho3_oc/48.d0  + rho2_ic*rho1_oc/160.d0
+!    nine_coeff   = rho2_ic*rho2_oc/180.d0 
+!    ten_coeff    = rho2_ic*rho3_oc/200.d0
+
+    rho_psi_icb = five_coeff*(r5_c(Ni)/1e15) + six_coeff*(r6_c(Ni)/1e18)  + seven_coeff*(r7_c(Ni)/1e21) + &
+                  eight_coeff*(r8_c(Ni)/1e24)+ nine_coeff*(r9_c(Ni)/1e27) + ten_coeff*(r10_c(Ni)/1e30)  + & 
+                  eleven_coeff*(r11_c(Ni)/1e33)
+
+    int_rhopsi_dV = 16.d0 * pi * pi * G * (rho_psi_cmb - rho_psi_icb + rho_psicmb_cmb - rho_psicmb_icb) *1e15
+
+    Qg = Cc * Cr  * alphac * (int_rhopsi_dV - M_oc*psir_c(Ni))
+
+    Eg = Qg/Tc
+
+  end subroutine gravitational_poly_core
+
+  subroutine adiabatic_heating(N, Ni, L, Tc, Cr, Cc, alphac, QP, QPL, EP, EPL)
+
+     integer, intent(in)           :: N, Ni
+     double precision, intent(in)  :: Tc, Cr, Cc, alphac, L
+     double precision, intent(out) :: QP, QPL, EP, EPL
+     double precision              :: fac, roc(N-Ni)
+     double precision              :: integrand_rhor_c2(N-Ni), integrand_rho_rm2(N-Ni), integrand(N-Ni), P_T(N-Ni)
+     integer                       :: i
+
+     fac        = -8.d0 * pi * G * alphac * Cr * Cc
+
+     integrand_rhor_c2 = 0.d0
+     do i = Ni+1, N
+       integrand_rhor_c2(i-Ni) = rhor_c(i)*r_c(i)*r_c(i)
+       roc(i-Ni)             = r_c(i)
+     enddo
+     call splat(integrand_rhor_c2,roc,(N-Ni))
+
+     integrand_rho_rm2 = 0.d0
+     do i = Ni+1, N
+       integrand_rho_rm2(i-Ni) = integrand_rhor_c2(i-Ni) * rhor_c(i) /r2_c(i)
+     enddo
+     call splat(integrand_rho_rm2,roc,(N-Ni))
+
+     integrand = 0.d0
+     do i = Ni+1, N
+       integrand(i-Ni)         = integrand_rho_rm2(i-Ni) - integrand_rho_rm2(N-Ni)
+     enddo
+
+     P_T = 0.d0
+     P_T = fac * integrand
+
+     integrand = 0.d0
+     do i = Ni+1, N
+       integrand(i-Ni) = alphaT_c * P_T(i-Ni) * Tar_c(i)* r2_c(i)
+     enddo
+     call splat(integrand,roc,(N-Ni))
+
+     QP = 4.d0 * pi * integrand(N-Ni)
+
+     write(*,'(A16,E16.6)') 'Qpt=',QP
+
+     integrand = 0.d0
+     do i = Ni+1, N
+       integrand(i-Ni) = alphaT_c * P_T(i-Ni) * r2_c(i)
+     enddo
+     call splat(integrand,roc,(N-Ni))
+
+     EP  = QP/Tc - (4.d0 * pi * integrand(N-Ni))
+
+     write(*,'(A16,E16.6)') 'Ept=',EP
+
+     QPL = -4.d0 * pi * r2_c(Ni+1) * rhor_c(Ni+1) * dTmdP_c(Ni+1) * P_T(1) * Cr * L
+
+     write(*,'(A16,E16.6)') 'QPLt=',QPL
+
+     EPL = QPL * (1.d0/Tc - 1.d0/Tar_c(Ni+1))
+     write(*,'(A16,E16.6)') 'Ept=',EPL
+
+  end subroutine adiabatic_heating
+
+  subroutine heatofreaction_core(N,Ni,dridt,Cc,Eh)
+
+    integer         , intent(in)  :: N, Ni
+    double precision, intent(in)  :: dridt,Cc
+    double precision              :: It1_c, It2_c, It
+    double precision, intent(out) :: Eh
+
+
+    It1_c = 4.d0*pi*rho_cen*r3_c(N) *(1.d0 - (0.6d0 * r2_c(N) /B2))/(3.d0*T_cen)
+    It2_c = 4.d0*pi*rho_cen*r3_c(Ni)*(1.d0 - (0.6d0 * r2_c(Ni)/B2))/(3.d0*T_cen)
+    It  = It1_c - It2_c
+
+    Eh  = Rh * (It - (M_oc/Tar_c(Ni+1))) * Cc * dridt
+
+  end subroutine heatofreaction_core
+
+  subroutine heatofreaction_poly_core(N,Ni,dridt,Cc,Eh)
+
+    integer         , intent(in)  :: N, Ni
+    double precision, intent(in)  :: dridt,Cc
+    double precision              :: integrand(N-Ni), roc(N-Ni)
+    double precision, intent(out) :: Eh
+    integer                       :: i
+
+    integrand = 0.d0
+
+    do i = Ni+1, N
+      integrand(i-Ni) = r_c(i)*r_c(i)*rhor_c(i)*(1.d0/Tar_c(i))
+      roc(i-Ni)       = r_c(i) 
+    enddo
+    call splat(integrand,roc,(N-Ni))
+
+    Eh = Rh * ( (4.d0 * pi * integrand(N-Ni)) - (M_oc/Tar_c(Ni+1))) * Cc * dridt
+
+  end subroutine heatofreaction_poly_core
+
+  subroutine heatofreaction_poly_correct_core(N,Ni,dridt,Cc,Eh)
+
+    integer         , intent(in)  :: N, Ni
+    double precision, intent(in)  :: dridt,Cc
+    double precision, intent(out) :: Eh
+    double precision              :: integrand(N+1), dmudT(0:N)
+    integer                       :: i
+
+    dmudT = dmudT0 + dmudT1*r_c/1e3
+
+    dmudT = dmudT * Ev * Na * 1000.d0 / (AO*1.d0)
+
+    integrand = 0.d0
+    do i = 0, N
+      integrand(i+1) = r_c(i)*r_c(i)*rhor_c(i)*dmudT(i)
+    enddo
+    call splat(integrand,r_c,N+1)
+
+    Eh = -4.d0 * pi * Cc * dridt * ( integrand(N) - integrand(Ni+1) )
+
+  end subroutine heatofreaction_poly_correct_core
+
+! ASSUMES - alpha_c and alpha_D are constants. 
+!           core is well-mixed and thermodiffusion is negligible (grad(c) & K_T = 0 in eq 15 of Gub etal 14)
+!           IS THERE AN ERROR IN EQN 32 OF GUBBINS ET AL 2004? 
+  subroutine baro_entropy_core(Nic, cbarO_oc, cbarS_oc, cbarSi_oc, Ealpha)
+
+    integer         , intent(in):: Nic
+    double precision, intent(in):: cbarO_oc, cbarS_oc, cbarSi_oc
+    double precision            :: alphaDO, alphaDS, alphaDSi
+    double precision            :: dmubar_dcbarO_oc, dmubar_dcbarS_oc, dmubar_dcbarSi_oc
+    double precision            :: dmudcO       , dmudcS       , dmudcSi
+    double precision            :: Tbar, rhobar, Abar
+    double precision            :: integrand(N+1)
+    double precision            :: EalphaO, EalphaS, EalphaSi, Ealpha
+    integer                     :: i
+
+    Abar = cbarO_oc*AO + cbarS_oc*AS + cbarSi_oc*ASi + (1.d0-cbarO_oc-cbarS_oc-cbarSi_oc)*AFe
+
+    Tbar   = (Tar_c(N) + Tar_c(0)) / 2
+    rhobar = (rhor_c(N) + rhor_c(0)) / 2
+
+    dmubar_dcbarO_oc  = kb*Tbar/cbarO_oc  + lambdaO_oc
+    dmubar_dcbarS_oc  = kb*Tbar/cbarS_oc  + lambdaS_oc
+    dmubar_dcbarSi_oc = kb*Tbar/cbarSi_oc + lambdaSi_oc
+
+    dmudcO  = dmubar_dcbarO_oc  * (Abar/AO)  * Ev * Na * (1000.d0/AO)
+    dmudcS  = dmubar_dcbarS_oc  * (Abar/AS)  * Ev * Na * (1000.d0/AS)
+    dmudcSi = dmubar_dcbarSi_oc * (Abar/ASi) * Ev * Na * (1000.d0/ASi)
+
+    alphaDO  = rhobar * DO  / dmudcO 
+    alphaDS  = rhobar * DS  / dmudcS
+    alphaDSi = rhobar * DSi / dmudcSi
+
+    integrand = 0.d0
+    do i = 0, N
+      integrand(i+1) = r_c(i)*r_c(i)*gr_c(i)*gr_c(i)*(1.d0/Tar_c(i))
+    enddo
+    call splat(integrand,r_c,N+1)
+
+    EalphaO  = 4.d0* pi * alphac_cO *alphac_cO *alphaDO  * (integrand(N)-integrand(Nic+1)) 
+    EalphaS  = 4.d0* pi * alphac_cS *alphac_cS *alphaDS  * (integrand(N)-integrand(Nic+1))
+    EalphaSi = 4.d0* pi * alphac_cSi*alphac_cSi*alphaDSi * (integrand(N)-integrand(Nic+1))
+
+    Ealpha   = EalphaO + EalphaS + EalphaSi
+
+    write(*,'(A16,2E16.6)') 'EalphaO=',EalphaO, alphaDO
+    write(*,'(A16,2E16.6)') 'EalphaS=',EalphaS, alphaDS
+    write(*,'(A16,2E16.6)') 'EalphaSi=',EalphaSi, alphaDSi
+
+  end subroutine baro_entropy_core
+
+  subroutine cond_entropy_core(N,Ea)
+
+    integer, intent(in) :: N
+    double precision    :: It1_c, It2_c, fac
+    double precision, intent(out) :: Ea
+
+    It1_c = 1.d0
+    It2_c = 2.d0/(7.d0*(k1_oc*k1_oc/r2_c(N)) - 1.d0)
+    fac = 16.d0*pi*kr_c(N)*r5_c(N)/(5.d0*D4)
+    Ea  = fac * (It1_c + It2_c)
+
+  end subroutine cond_entropy_core
+
+  subroutine cond_entropy_poly_core(N,Ea)
+
+    integer, intent(in)           :: N
+    double precision, intent(out) :: Ea
+    double precision              :: integrand(N)
+    integer                       :: i
+
+    integrand = 0.d0
+
+    do i = 1,N
+        integrand(i)=kr_c(i)*(r_c(i)*dTadr_c(i)/Tar_c(i))**2
+    enddo
+    call splat(integrand,r_c,N)
+
+    Ea=4.d0*pi*integrand(N)
+
+  end subroutine cond_entropy_poly_core
+
+  subroutine layer_depth1(dTplusdr, dcplusdr, alphac, rs)
+
+    double precision, intent(in)  :: dTplusdr, dcplusdr, alphac
+    double precision, intent(out) :: rs
+
+    write(*,*) '***************************'
+    write(*,*) '*****LAYER DEPTH CALC1*****'
+    write(*,'(A16,E16.6)') 'dTdr = ', dTplusdr 
+    write(*,'(A16,E16.6)') 'dcdr = ', dcplusdr 
+    write(*,'(A16,E16.6)') 'T_cen = ', T_cen
+
+    rs = -( dTplusdr + (alphac/alphaT_c)*dcplusdr ) * (D2 / (2.d0*T_cen))
+
+    write(*,'(A16,E16.6)') 'rs   = ', rs
+    write(*,*) '***************************'
+
+    if(rs > rc) rs = rc
+
+  end subroutine layer_depth1
+
+! Find the position where dTdr-dTadr_c changes sign
+  subroutine layer_depth2(dTplusdr, dcplusdr, rs)
+
+    double precision, intent(in)  :: dTplusdr, dcplusdr
+    double precision, intent(out) :: rs
+    double precision              :: diff, rmrs
+    integer :: i, ns
+
+    write(*,*) '***************************'
+    write(*,*) '*****LAYER DEPTH CALC2*****'
+    write(*,'(A16,E16.6)') 'dTdr = ', dTplusdr
+    write(*,'(A16,E16.6)') 'dcdr = ', dcplusdr
+
+    rmrs = 1d10
+    diff = 0.d0
+
+    do i = 0, N
+       diff = dTplusdr - dTadr_c(i)
+       if(dabs(diff) <  dabs(rmrs) ) then
+         ns   = i
+         rmrs = diff
+       endif
+    enddo
+
+    rs = r_c(ns)
+
+    write(*,'(A16,F16.6,I16)') 'rs   = ', rs, ns
+    write(*,*) '***************************'
+
+  end subroutine layer_depth2
+
+
+! Finds the temperature at (near) the base of the stable layer
+  subroutine find(N,rs,A,ns,Tc)
+
+    implicit none
+
+    integer         , intent(in)  :: N
+    double precision, intent(in)  :: rs, A(N)
+    double precision, intent(out) :: Tc
+    double precision              :: rmrs, rdiff
+    integer                       :: i, ns
+
+    rmrs  = 1d10
+    rdiff = 0.d0
+
+    do i = 0, N
+       rdiff = r_c(i) - rs
+       if(dabs(rdiff) <  dabs(rmrs) ) then
+         ns   = i
+         rmrs = rdiff
+       endif
+    enddo
+
+    if(ns > N) ns = N
+    ns = ns+1
+
+    Tc = A(ns)
+
+  end subroutine find
+
+  subroutine open_files_core(char)
+
+    character (len=4)   :: char
+    character (len=100) :: energy_file, entropy_file, diag_file, pro_file, icb_file, conc_file
+
+    energy_file  = out_file(1:out_file_len)//"_"//char//'_energy'
+    entropy_file = out_file(1:out_file_len)//"_"//char//'_entropy'
+    diag_file    = out_file(1:out_file_len)//"_"//char//'_diagnostics'
+    pro_file     = out_file(1:out_file_len)//"_"//char//'_profiles'
+    icb_file     = out_file(1:out_file_len)//"_"//char//'_icb'
+    conc_file    = out_file(1:out_file_len)//"_"//char//'_conc'
+
+    open(10,file=energy_file)
+    open(11,file=entropy_file)
+    open(12,file=diag_file)
+    open(13,file=pro_file)
+    open(14,file=icb_file)
+    open(15,file=conc_file)
+    write(10,'(12A16)') 'Time (Myr)', 'Qs', 'Qg', 'Ql', 'Qr', 'Qcmb', 'Qa', 'dTdr_c(CMB)', 'dTrsdr', 'dTadr_c(rs)', 'QP', 'QPL'
+    write(11,'(11A16)') 'Time (Myr)', 'Es', 'Eg', 'El', 'Er', 'EJ', 'Ea', 'Eh', 'Ealpha', 'EP', 'EPL'
+    write(12,'(8A16)')  'Time (Myr)', 'Tc', 'dTcdt', 'ri', 'rs', 'dridt', 'M_c', 'M_oc'
+    write(13,'(9A16)')  'r', 'T', 'dTadr_c', 'Tm', 'p', 'rho', 'g', 'psi', 'k'
+    write(14,'(10A16)') 'dTadP(ri)','dTmdP(ri)','rho(ri)','T(ri)','g(ri)','p(ri)','Cr','dTadr(ri)','dTmdr(ri)','T_cen'
+    write(15,'(14A16)') 'Time (Myr)','ri','clO','clS','clSi','csO','csS','csSi','QgO','QgS','QgSi','dTmO', 'dTmS', 'dTmSi'
+
+  end subroutine open_files_core
+
+  subroutine close_files_core()
+
+    close(10)
+    close(11)
+    close(12)
+    close(13)
+    close(14)
+    close(15)
+
+  end subroutine close_files_core
+
+  subroutine write_profiles_core()
+
+    implicit none
+
+    integer :: j
+
+    do j = 0, N
+      write(13,'(9E16.8)') r_c(j), Tar_c(j), dTadr_c(j), Tm_c(j), pr_c(j), rhor_c(j), gr_c(j), psir_c(j), kr_c(j)
+    enddo
+    write(13,*)
+    write(13,*)
+
+  end subroutine write_profiles_core
+
+end module core_model

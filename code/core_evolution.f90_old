@@ -1,0 +1,258 @@
+  module core_evolution
+
+    use core_model
+    use parameters
+
+    implicit none
+
+    ! Note that pressure doesn't change in time, but this doesn't matter 
+    ! as it only affects the melting curve, which is assumed const  
+    ! t indicates 'tilde' i.e. not yet multiplied by dTcdt
+
+    ! The pressure could, in principle, be evolved in time because it is 
+    ! Inside the loops rather than precomputed. This is because we need all 
+    ! the profiles on the same grid for computing the ICB radius in ricalc
+
+    integer          :: Nic, i, j, z
+    double precision :: Qa, Qst, Qr, Qlt, Qgt, Qtt, QPt, QPLt
+    double precision :: Ealpha, Ea, Est, Er, Elt, Egt, Ett, Eht, EPt, EPLt
+    double precision :: dTplusdr, dcplusdr, dTcmbdr, dTrsdr, Cr, dridt
+    double precision :: Ttop, Tbottom, difftb
+
+  contains
+
+  subroutine core_evol_calc(Q,Tc,time,dTcdt,ri,EJ,clO,clS,clSi,forback)
+
+    double precision :: Q, Tc, time, dTcdt, ri, EJ
+    double precision :: QgO, EgO, QgS, EgS, QgSi, EgSi
+    double precision :: LH_c
+    double precision :: rt, rm1, rm2, rb
+    double precision :: CcO, CcS, CcSi, dTmO(0:N), dTmS(0:N), dTmSi(0:N)
+    double precision :: clO, clS, clSi, csO, csS, csSi
+    double precision :: clbarO, clbarS, clbarSi, csbarO, csbarS, csbarSi
+    integer          :: forback, i
+
+      call Lcalc_core()                           !Lengths for the Nimmo/Labrosse representation
+      call Dcalc_core()
+      call Acalc_core()
+      call Bcalc_core()
+
+!     Comment this to reproduce previous results for barodiffusion
+      call mass2moleconc_core(clO, clS, clSi, clbarO, clbarS, clbarSi)
+      if(davies_or_nimmo == 1) then               !Need Nic here for when theres no IC
+        call conductivity_poly_core()                             ! Get conductivity profile
+        call adiabat_poly_core(N,Tc,Qa)           !Find Ta on this grid
+        call pressure_poly_core(Nic,N,Pc)         !Find P on this grid
+!        call melting_poly_core()                  !Find Tm(P)
+        call melting_mars(clbarS)
+      else 
+        call conductivity_core()
+        call adiabat_core(N,Tc,Qa)                !Find Ta on this grid
+        call pressure_core(Nic,N,Pc)              !Find P on this grid
+!        call melting_core()                       !Find Tm(P)
+        call melting_mars(clbarS)
+      endif
+
+      if(meltdep == 0.d0) then 
+        call entropy_melting()
+        call solid_conc(clbarO , lambdaO_oc , lambdaO_ic , dmuO , csbarO)
+        call solid_conc(clbarS , lambdaS_oc , lambdaS_ic , dmuS , csbarS)
+        call solid_conc(clbarSi, lambdaSi_oc, lambdaSi_ic, dmuSi, csbarSi)
+        call melting_pt_dep(clbarO, csbarO, dTmO)    !Melting pt depression due to O
+        call melting_pt_dep(clbarS, csbarS, dTmS)    !Melting pt depression due to S
+        call melting_pt_dep(clbarSi, csbarSi, dTmSi) !Melting pt depression due to Si
+        call mole2massconc_core(csbarO, csbarS, csbarSi, csO, csS, csSi)
+        Tm_c = Tm_c + dTmO + dTmS + dTmSi
+      else
+        csO=clO; csS=0.d0; csSi=clSi
+      endif
+
+      if( (iteration==0) .and. (davies_or_nimmo==1) ) call adiabat_init(Tc,Qa)
+
+      call ricalc(N, ri)                          !Find inner core radius using Tm & Ta on old grid
+      call rscalc(N, rt, rm1, rm2, rb)
+write(356,'(5F20.8)') time, rb, rm2, rm1, rt
+!      if(rt == 0.d0) stop "Whole core has frozen from the top down!"
+
+      Nic=Ni                                      !Ni is total number of pts used for IC
+      if(ri == 0.d0) Nic=0                        !If no IC, put no pts in IC
+      if(ri == 0.d0) then 
+        csO=0.d0; csS=0.d0; csSi=0.d0
+      endif
+
+      call rpts_core(ri,rs)                       !Set new grid based on ri
+
+      call lh_coeff_core(LH_c)
+      if(davies_or_nimmo == 1) then
+        call conductivity_poly_core()                             ! Get conductivity profile
+        call mass_poly_core(Nic,N)                !Now compute everything on new grid
+        call mass_poly_correct(ri)
+        call mass_poly_core(Nic,N)                !Now compute everything on new grid
+        call density_poly_core(Nic, clO, alphac_cO)
+        call gravity_poly_core(Nic)
+        call grav_pot_poly_core(Nic,N)
+        call adiabat_poly_core(N,Tc,Qa)
+        call pressure_poly_core(Nic,N,Pc)
+!        call melting_poly_core()
+        call melting_mars(clbarS)
+        call entropy_melting()
+        if(meltdep == 0.d0) then
+          call melting_pt_dep(clbarO, csbarO, dTmO)    !Melting pt depression due to O
+          call melting_pt_dep(clbarS, csbarS, dTmS)    !Melting pt depression due to S
+          call melting_pt_dep(clbarSi, csbarSi, dTmSi) !Melting pt depression due to Si
+          Tm_c = Tm_c + dTmO + dTmS + dTmSi
+        endif
+      else
+        call conductivity_core()
+        call mass_core(Nic,N)      
+        call density_core()
+        call gravity_core()
+        call grav_pot_core(N)
+        call pressure_core(Nic,N,Pc)
+        call adiabat_core(N,Tc,Qa)
+!        call melting_core()
+        call melting_mars(clbarS)
+      endif
+
+      call write_profiles_core()
+
+      call crfac(Nic,Tc,ri,Cr)                                             !dridt
+      call ccfac(Nic, clO , csO,  CcO)                          
+      call ccfac(Nic, clS , csS,  CcS)                          
+      call ccfac(Nic, clSi, csSi, CcSi)                                    !Dc/dt -> dTc/dt
+
+      call latent_core(Nic,LH_c,Tc,Cr,Qlt,Elt)                             !Latent heat
+
+      if(davies_or_nimmo == 1) then
+        Qgt = 0.d0; Egt = 0.d0
+        call secular_poly_core(N,Nic,Tc,Qst,Est)                            !Secular
+        call radiogenic_poly_core(N,Tc,h,Qr,Er)                            !Radiogenic
+        call gravitational_poly_core(N,Nic,Tc,Cr,CcO ,alphac_cO ,QgO,EgO)  !Gravitational energy
+        Qgt=QgO; Egt=EgO
+        call gravitational_poly_core(N,Nic,Tc,Cr,CcS ,alphac_cS ,QgS,EgS)  !Gravitational energy
+        Qgt=Qgt+QgS;  Egt=Egt+EgS
+        call gravitational_poly_core(N,Nic,Tc,Cr,CcSi,alphac_cSi,QgSi,EgSi)!Gravitational energy
+        Qgt=Qgt+QgSi; Egt=Egt+EgSi
+        call heatofreaction_poly_correct_core(N,Nic,Cr,CcO,Eht)             !Heat of reaction
+        call cond_entropy_poly_core(N,Ea)                                  !Thermal conduction
+      else
+        call secular_core(N,Tc,Qst,Est)                                    !Secular
+        call radiogenic_core(N,Tc,h,Qr,Er)                                 !Radiogenic
+        call gravitational_core(N,Nic,Tc,Cr,CcO,alphac_cO,Qgt,Egt)         !Gravitational energy
+        call heatofreaction_core(N,Nic,Cr,CcO,Eht)
+        call cond_entropy_core(N,Ea)
+      endif
+      call baro_entropy_core(Nic, clbarO, clbarS, clbarSi, Ealpha)
+
+      if(ah==1) then                                    !Small QP and QPL terms
+        call adiabatic_heating(N, Ni, LH_c, Tc, Cr, CcO, alphac_cO, QPt, QPLt, EPt, EPLt)
+      else 
+        QPt=0.d0; QPLt=0.d0; EPt=0.d0; EPLt=0.d0
+      endif
+
+      if(hor .ne. 1) Eht = 0.d0
+
+      call core_en_ent_calc(Q,time,dTcdt,ri,EJ,forback) !Relate EJ and Q
+
+      dridt = Cr*dTcdt                                  !IC growth rate
+      dTcmbdr = -Q/(4.d0*pi*rc*rc*kr_c(N))              !dTdr @ CMB
+
+      write(10,'(12E16.6)') time, Qst*dTcdt, Qgt*dTcdt, Qlt*dTcdt, Qr, & 
+                            Q, Qa, dTcmbdr, dTplusdr, dTadr_c(N), QPt*dTcdt, QPLt*dTcdt
+      write(11,'(11E16.6)') time, Est*dTcdt, Egt*dTcdt, Elt*dTcdt, Er, EJ, Ea, Eht*dTcdt, & 
+                            Ealpha, EPt*dTcdt, EPLt*dTcdt
+      write(12,'(8E16.8)')  time, Tc, dTcdt*secingyr,ri, rt, dridt*secingyr, M_c ,M_oc
+      write(15,'(14E16.6)') time, ri, clO, clS, clSi, csO, csS, csSi, QgO*dTcdt, QgS*dTcdt, QgSi*dTcdt, & 
+                            dTmO(Ni+1), dTmS(Ni+1), dTmSi(Ni+1)
+
+      call dcdt(CcO , Cr, dTcdt, clO , forback)
+      call dcdt(CcS , Cr, dTcdt, clS , forback)
+      call dcdt(CcSi, Cr, dTcdt, clSi, forback)
+      call radiogenic_decay_core(time, h0_c, h)
+
+      if(forback==1) Tc  = Tc + dTcdt*secinyr*dt        !New CMB temperature
+      if(forback==2) Tc  = Tc - dTcdt*secinyr*dt        !New CMB temperature
+
+      if(Tc < 0.d0) then
+        write(*,*) '********************'
+        write(*,*) 'CMB temperature < 0!'
+        write(*,*) 'time, Tc = ', time, Tc
+        write(*,*) '********************'
+        stop
+      endif
+
+  end subroutine core_evol_calc
+
+  subroutine core_en_ent_calc(Q,time,dTcdt,ri,EJ,forback)
+
+    double precision,save :: Qlast, Efirst
+    double precision      :: time, ri, Q, dTcdt, EJ
+    integer               :: forback
+    integer, save         :: qq
+
+      Qtt = Qst + Qgt + Qlt + QPt + QPLt
+      Ett = Est + Egt + Elt + Eht + EPt  + EPLt
+
+      write(*,'(A16,E16.6)') 'Qst=',Qst
+      write(*,'(A16,E16.6)') 'Qgt=',Qgt
+      write(*,'(A16,E16.6)') 'Qlt=',Qlt
+      write(*,'(A16,E16.6)') 'Qtt=',Qtt
+      write(*,'(A16,E16.6)') 'Est=',Est
+      write(*,'(A16,E16.6)') 'Egt=',Egt
+      write(*,'(A16,E16.6)') 'Elt=',Elt
+      write(*,'(A16,E16.6)') 'Eht=',Eht
+      write(*,'(A16,E16.6)') 'Ett=',Ett
+
+      if(forback==1) then 
+        dTcdt = (Q - Qr)/Qtt
+        EJ    = Ett*dTcdt + Er - Ea - Ealpha
+        write(*,'(A16, E16.6, I16)') 'time (Q fixed) = ', time, i
+      elseif(forback==2) then 
+
+        if((sol==0) .or. (sol==1)) then              !Q specified
+          dTcdt = (Q - Qr)/Qtt
+          EJ    = Ett*dTcdt + Er - Ea - Ealpha
+          write(*,'(A16, E16.6, I16)') 'time (Q fixed) = ', time, i
+
+        elseif(sol==2) then                          !OH specified
+          dTcdt = (EJ + Ea + Ealpha - Er)/Ett
+          Q     = Qtt*dTcdt + Qr
+          write(*,'(A16, E16.6, I16)') 'time (E fixed) = ', time, i
+
+        elseif(sol==3) then                          !Q post IC formation; OH otherwise
+          if(ri .ne. 0.d0) then
+            dTcdt = (Q - Qr)/Qtt
+            EJ    = Ett*dTcdt + Er - Ea - Ealpha
+            qq = 1
+            Efirst=EJ                                !Track EJ through IC formation
+            write(*,'(A16, E16.6, I16)') 'time (Q fixed) = ', time, i
+          else
+            if(qq==1) then                           !No IC for 1st time
+              dTcdt = (Q - Qr)/Qtt                   !Use last entropy Efirst
+              Efirst  = Ett*dTcdt + Er - Ea - Ealpha
+              qq=2                                   !Don't come in here again
+            endif
+            EJ = Efirst                              !EJ fixed pre IC formation
+            dTcdt = (EJ + Ea  + Ealpha - Er)/Ett
+            Q     = Qtt*dTcdt + Qr 
+            write(*,'(A16, E16.6, I16)') 'time (E fixed) = ', time, i
+          endif
+
+         endif
+
+        endif
+
+  end subroutine core_en_ent_calc
+
+! If forback = 1, forward; 2=backward
+  subroutine get_time(i,time,dt,forback)
+
+    integer          :: i, forback
+    double precision :: dt, time
+
+    if(forback==1)  time  = real(i)*dt/1e6
+    if(forback==2)  time  = (ttot/1e6) - real(i)*dt/1e6
+
+  end subroutine get_time
+
+  end module core_evolution
