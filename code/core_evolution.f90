@@ -41,7 +41,8 @@
     call mass2moleconc_core(clO, clS, clSi, clbarO, clbarS, clbarSi) !Get mole fractions too
     call adiabat_poly_core(N,Tc,Qa)                                  !Find Ta on this grid
     call pressure_poly_core(Nic,N,Pc)                                !Find P on this grid
-    call conductivity_T_core()                                       !Get conductivity profile
+    !call conductivity_T_core()                                       !Get conductivity profile
+    call conductivity_poly_core()
     call entropy_melting()                                           !Find dS
     call melting_mars(clS)                                       !Find Tm(P)
 
@@ -83,7 +84,8 @@
     call grav_pot_poly_core(Nic,N)
     call adiabat_poly_core(N,Tc,Qa)
     call pressure_poly_core(Nic,N,Pc)
-    call conductivity_T_core()                     ! Get conductivity profile
+    !call conductivity_T_core()                     ! Get conductivity profile
+    call conductivity_poly_core()
     call entropy_melting()
     call melting_mars(clS)
     if(meltdep == 0.d0) then
