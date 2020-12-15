@@ -1,3 +1,4 @@
 code/*.o
 code/*.mod
 code/thermal_history
+reference_case/output/*
